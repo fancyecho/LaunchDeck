@@ -58,12 +58,12 @@ scripts/build-app.sh debug      # 带调试截图钩子的 debug 版
 open build/LaunchDeck.app
 ```
 
-构建脚本直接调用 `swiftc`。原因有两个：部分命令行工具版本自带的 SwiftPM 清单库链接会失败；macOS 27 SDK 需要 Xcode 才有的 SwiftUI 宏插件，所以脚本会优先使用 26.x SDK。装了 Xcode 也可以直接打开 `Package.swift`。
+构建脚本直接调用 `swiftc`。原因有两个：部分命令行工具版本自带的 SwiftPM 清单库链接会失败；macOS 27 SDK 需要 Xcode 才有的 SwiftUI 宏插件，所以只有命令行工具时脚本会退回 26.x SDK。装了 Xcode 后会直接用最新 SDK，也可以打开 `Package.swift`。
 
-重新生成图标：
+图标是 Icon Composer 格式的 `Resources/AppIcon.icon`（暮色天空中的一颗玻璃彗星）。装了 Xcode 时，构建脚本会用 `actool` 把它编译成 Liquid Glass 图标，自动适配浅色、深色、透明、着色几种图标风格；只有命令行工具时，会使用预先渲染好的 `Resources/AppIcon.icns`。修改设计后重新生成（需要 Xcode）：
 
 ```bash
-xcrun swift scripts/make-icon.swift "$PWD" && iconutil -c icns build/AppIcon.iconset -o Resources/AppIcon.icns
+scripts/make-icon.sh
 ```
 
 ### 发布新版本

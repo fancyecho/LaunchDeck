@@ -59,7 +59,7 @@ extension LauncherCanvas {
     /// Moves the tile into the top-level drag layer and lifts it toward the pointer.
     private func lift(_ tile: TileLayer, at p: CGPoint) -> CGPoint {
         guard let parent = tile.superlayer else { return .zero }
-        let pos = dragLayer.convert(tile.presentation()?.position ?? tile.position, from: parent)
+        let pos = dragLayer.convert(Motion.currentPosition(tile), from: parent)
         tile.removeAnimation(forKey: "move")
         tile.stopJiggle()
         Motion.instantly {
@@ -290,7 +290,7 @@ extension LauncherCanvas {
 
     /// Drops the dragged tile back into `container`, keeping it where it is on screen.
     private func settle(_ tile: TileLayer, into container: CALayer) {
-        let pos = container.convert(tile.presentation()?.position ?? tile.position, from: dragLayer)
+        let pos = container.convert(Motion.currentPosition(tile), from: dragLayer)
         Motion.instantly {
             tile.removeFromSuperlayer()
             container.addSublayer(tile)

@@ -38,9 +38,18 @@ enum Motion {
         CATransaction.commit()
     }
 
+    /// Where `layer` is on screen right now, in its superlayer's space. Only trusts
+    /// the presentation copy mid-animation: right after a reparent it still holds
+    /// coordinates from the old superlayer, which sent dropped icons flying in from
+    /// the screen edge on later pages.
+    static func currentPosition(_ layer: CALayer) -> CGPoint {
+        guard layer.animation(forKey: "move") != nil, let p = layer.presentation() else { return layer.position }
+        return p.position
+    }
+
     /// Springs `layer` to `position`, starting from wherever it currently appears.
     static func move(_ layer: CALayer, to position: CGPoint, response: CGFloat = 0.42, damping: CGFloat = 0.84) {
-        let from = layer.presentation()?.position ?? layer.position
+        let from = currentPosition(layer)
         layer.removeAnimation(forKey: "move")
         instantly { layer.position = position }
         guard hypot(from.x - position.x, from.y - position.y) > 0.5 else { return }

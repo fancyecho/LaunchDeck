@@ -85,6 +85,32 @@ enum DebugSnapshot {
                 steps.append((0.016, { canvas.pointerMoved(to: CGPoint(x: 900 + CGFloat(i) * 7, y: y - 20 - CGFloat(i) * 1.5)) }))
             }
             steps.append((0.02, { capture(canvas, "\(dir)/comet-slow.png") }))
+        case "dragout2"?:
+            // Same as dragout but from a folder on page 2, dropped into a gap; the
+            // mid-flight capture shows where the icon lands from.
+            steps.append((0.1, { canvas.goTo(page: 1) }))
+            steps.append((0.6, {
+                if canvas.pages.count > 1, let f = canvas.pages[1].first(where: { $0.folder != nil }) { canvas.activate(f) }
+            }))
+            var start2 = CGPoint.zero
+            let gap = CGPoint(x: canvas.metrics.center(for: 9).x - canvas.metrics.cell.width * 0.45,
+                              y: canvas.metrics.center(for: 9).y)
+            steps.append((0.8, {
+                let c = canvas.folderCenter(0, columns: canvas.folder?.columns ?? 6)
+                let m = canvas.folder?.metrics ?? canvas.metrics
+                let local = CGPoint(x: c.x, y: c.y - TileLayer.size(for: m).height / 2 + m.iconSize / 2)
+                start2 = canvas.folderStrip.convert(local, to: canvas.root)
+                mouse(.leftMouseDown, start2, window)
+            }))
+            steps.append((0.05, { mouse(.leftMouseDragged, CGPoint(x: start2.x + 20, y: start2.y), window) }))
+            steps.append((0.1, { mouse(.leftMouseDragged, CGPoint(x: 60, y: canvas.metrics.size.height * 0.5), window) }))
+            steps.append((0.5, { mouse(.leftMouseDragged, gap, window) }))
+            steps.append((0.4, { mouse(.leftMouseUp, gap, window) }))
+            steps.append((0.06, { capture(canvas, "\(dir)/dragout2-flight.png") }))
+            steps.append((0.7, {
+                NSLog("LaunchDeck debug: after dragout2 page2 \(canvas.pages[safe: 1]?.prefix(12).map(\.id) ?? [])")
+                capture(canvas, "\(dir)/dragout2-done.png")
+            }))
         case "merge"?:
             // Drag the first icon onto the second and hold until the folder forms.
             let a = iconCenter(canvas, 0), b = iconCenter(canvas, 1)

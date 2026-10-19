@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Compiles LaunchDeck with swiftc and wraps it into build/LaunchDeck.app.
-# Calls swiftc directly instead of SwiftPM so it works with only the Command Line
-# Tools installed (some CLT releases ship a PackageDescription that fails to link).
+# Calls swiftc directly instead of SwiftPM so it also works with only the Command
+# Line Tools installed (some CLT releases ship a PackageDescription that fails to
+# link). With Xcode selected it uses the newest SDK and builds the glass icon.
 # Usage: scripts/build-app.sh [release|debug]
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -34,7 +35,13 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$OUT/LaunchDeck" "$APP/Contents/MacOS/LaunchDeck"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
-if [[ -f Resources/AppIcon.icns ]]; then
+# Liquid Glass icon: with Xcode, compile Resources/AppIcon.icon (Icon Composer)
+# into Assets.car plus a matching .icns. Without it, use the pre-rendered .icns.
+if xcrun --find actool >/dev/null 2>&1 && [[ -d Resources/AppIcon.icon ]]; then
+  xcrun actool Resources/AppIcon.icon --compile "$APP/Contents/Resources" \
+    --platform macosx --minimum-deployment-target 26.0 --app-icon AppIcon \
+    --output-partial-info-plist "$OUT/icon-partial.plist" --errors >/dev/null
+elif [[ -f Resources/AppIcon.icns ]]; then
   cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 fi
 
