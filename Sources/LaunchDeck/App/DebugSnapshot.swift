@@ -111,6 +111,37 @@ enum DebugSnapshot {
                 NSLog("LaunchDeck debug: after dragout2 page2 \(canvas.pages[safe: 1]?.prefix(12).map(\.id) ?? [])")
                 capture(canvas, "\(dir)/dragout2-done.png")
             }))
+        case "folderanim"?:
+            // Mid-flight frames of a scrolling folder opening, then closing.
+            steps.append((0.1, { canvas.goTo(page: 1) }))
+            steps.append((0.6, {
+                if canvas.pages.count > 1, let f = canvas.pages[1].first(where: { $0.folder?.apps.count ?? 0 > 18 }) {
+                    canvas.activate(f)
+                }
+            }))
+            steps.append((0.09, { capture(canvas, "\(dir)/open-1.png") }))
+            steps.append((0.12, { capture(canvas, "\(dir)/open-2.png") }))
+            steps.append((0.8, { capture(canvas, "\(dir)/open-done.png") }))
+            steps.append((0.05, { canvas.closeFolder(animated: true) }))
+            steps.append((0.12, { capture(canvas, "\(dir)/close-1.png") }))
+            steps.append((0.6, { capture(canvas, "\(dir)/close-done.png") }))
+        case "intofolder"?:
+            // Slide an app in from the left onto the "Other" folder (last slot on
+            // page 1) in small steps, and let go almost as soon as it arrives.
+            let last = (canvas.pages.first?.count ?? 1) - 1
+            let a = iconCenter(canvas, last - 1), b = iconCenter(canvas, last)
+            steps.append((0.1, {
+                NSLog("LaunchDeck debug: folder before \(canvas.pages.first?.last?.folder?.apps.count ?? -1)")
+                mouse(.leftMouseDown, a, window)
+            }))
+            for i in 1...12 {
+                let t = CGFloat(i) / 12
+                steps.append((0.025, { mouse(.leftMouseDragged, CGPoint(x: a.x + (b.x - a.x) * t, y: a.y), window) }))
+            }
+            steps.append((0.06, { mouse(.leftMouseUp, b, window) }))
+            steps.append((0.7, {
+                NSLog("LaunchDeck debug: after intofolder count \(canvas.pages.first?.count ?? 0), folder \(canvas.pages.first?.last?.folder?.apps.count ?? -1)")
+            }))
         case "merge"?:
             // Drag the first icon onto the second and hold until the folder forms.
             let a = iconCenter(canvas, 0), b = iconCenter(canvas, 1)
@@ -147,7 +178,7 @@ enum DebugSnapshot {
         default:
             break
         }
-        steps.append((0.1, { NSApp.terminate(nil) }))
+        steps.append((0.1, { AppLifecycle.quit() }))
         run(steps)
     }
 

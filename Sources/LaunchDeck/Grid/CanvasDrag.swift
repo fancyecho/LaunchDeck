@@ -89,9 +89,11 @@ extension LauncherCanvas {
         }
         handleEdge(p)
 
+        // Hit-test with the dragged icon itself, not the pointer: that's what people aim.
+        let probe = iconCenter(ofDragged: d)
         let display = displayPages(d)
         let items = display[d.hoverPage]
-        let slot = slotIndex(at: p)
+        let slot = slotIndex(at: probe)
         if slot >= items.count {
             cancelMerge()
             scheduleReorder(min(d.working[safe: d.hoverPage]?.count ?? 0, metrics.capacity - 1))
@@ -103,18 +105,39 @@ extension LauncherCanvas {
             cancelReorder()
             return
         }
-        // Hovering an icon's centre means "make a folder"; its edges mean "make room".
+
         let c = metrics.center(for: slot)
-        let iconCenter = CGPoint(x: c.x, y: c.y - TileLayer.size(for: metrics).height / 2 + metrics.iconSize / 2)
-        let local = CGPoint(x: p.x - (strip.position.x + CGFloat(d.hoverPage) * width), y: p.y)
-        let canMerge = d.item.folder == nil
-        if canMerge, hypot(local.x - iconCenter.x, local.y - iconCenter.y) < metrics.iconSize * 0.34 {
+        let target = CGPoint(x: c.x, y: c.y - TileLayer.size(for: metrics).height / 2 + metrics.iconSize / 2)
+        let local = CGPoint(x: probe.x - (strip.position.x + CGFloat(d.hoverPage) * width), y: probe.y)
+        let dx = local.x - target.x, dy = local.y - target.y
+        let s = metrics.iconSize
+
+        // Over the icon or its name: only ever "drop in", never shuffle, so a folder
+        // can't slide away from an app on its way in.
+        if abs(dx) < s * 0.55, dy > -s * 0.6, dy < s * 0.85 {
             cancelReorder()
-            scheduleMerge(occupant.id)
-        } else {
-            cancelMerge()
-            scheduleReorder(slot)
+            if d.item.folder == nil {
+                scheduleMerge(occupant.id, delay: occupant.folder != nil ? 0.15 : 0.32)
+            }
+            return
         }
+        cancelMerge()
+        // Directly above or below an icon (between rows): leave things be.
+        guard abs(dx) >= s * 0.55 else {
+            cancelReorder()
+            return
+        }
+        // In the gap beside an icon: make room before or after it.
+        let placeholderAt = items.firstIndex(of: placeholderItem) ?? Int.max
+        let working = slot < placeholderAt ? slot : slot - 1
+        scheduleReorder(dx < 0 ? working : working + 1)
+    }
+
+    /// Centre of the dragged icon artwork (the tile is lifted to 1.12×).
+    func iconCenter(ofDragged d: DragState) -> CGPoint {
+        let pos = d.tile.position
+        let lift = (metrics.iconSize / 2 - TileLayer.size(for: metrics).height / 2) * 1.12
+        return CGPoint(x: pos.x, y: pos.y + lift)
     }
 
     /// Grid slot under the pointer on the hovered page (may exceed the item count).
@@ -152,7 +175,8 @@ extension LauncherCanvas {
         if d.pendingInsert == index, reorderTimer != nil { return }
         reorderTimer?.invalidate()
         drag?.pendingInsert = index
-        reorderTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: false) { [weak self] _ in
+        // Icons only move aside once the dragged one rests in a gap for a moment.
+        reorderTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in
             guard let self, var d = self.drag else { return }
             d.insertIndex = index
             d.pendingInsert = nil
@@ -168,11 +192,11 @@ extension LauncherCanvas {
         drag?.pendingInsert = nil
     }
 
-    private func scheduleMerge(_ id: String) {
+    private func scheduleMerge(_ id: String, delay: TimeInterval) {
         guard let d = drag, d.mergeTargetID != id, d.pendingMergeID != id else { return }
         cancelMerge()
         drag?.pendingMergeID = id
-        mergeTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
+        mergeTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             guard let self, self.drag?.pendingMergeID == id else { return }
             self.drag?.mergeTargetID = id
             if let t = self.tiles[id] {
@@ -251,7 +275,9 @@ extension LauncherCanvas {
             return
         }
 
-        if let targetID = d.mergeTargetID, let (pg, ix) = locate(targetID, in: d.working), case .app(let draggedKey) = d.item {
+        // Dropping onto a folder counts even if its highlight hadn't come up yet.
+        let mergeID = d.mergeTargetID ?? d.pendingMergeID.flatMap { $0.hasPrefix("f:") ? $0 : nil }
+        if let targetID = mergeID, let (pg, ix) = locate(targetID, in: d.working), case .app(let draggedKey) = d.item {
             var next = d.working
             let newItem: LayoutItem
             switch next[pg][ix] {

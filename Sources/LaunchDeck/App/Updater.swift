@@ -140,7 +140,7 @@ final class Updater {
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
         task.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", app.path]
         try? task.run()
-        NSApp.terminate(nil)
+        AppLifecycle.quit()
     }
 
     // MARK: - UI
@@ -196,6 +196,7 @@ final class Updater {
     }
 
     fileprivate func raise(_ alert: NSAlert, above window: NSWindow?) {
+        NSApp.activate()  // from the menu bar the app may be in the background
         alert.window.level = NSWindow.Level(rawValue: (window?.level.rawValue ?? NSWindow.Level.normal.rawValue) + 1)
     }
 }

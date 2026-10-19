@@ -3,10 +3,12 @@ import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: LauncherController!
+    private var statusMenu: StatusMenu!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = makeMainMenu()
         controller = LauncherController()
+        statusMenu = StatusMenu(controller: controller)
 
         // Thumb and three fingers pinched together open the launcher; spread apart closes it.
         PinchMonitor.shared.handler = { [weak self] event in
@@ -32,6 +34,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Login items registered through SMAppService don't always carry that flag;
         // a launch within the first minutes after boot with the item enabled counts.
         return SMAppService.mainApp.status == .enabled && ProcessInfo.processInfo.systemUptime < 240
+    }
+
+    /// Only the menu bar's Quit (or logout, or an update) really quits; Quit from the
+    /// Dock or ⌘Q tucks LaunchDeck into the menu bar instead.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if AppLifecycle.reallyQuitting || AppLifecycle.isSystemQuit { return .terminateNow }
+        controller.hide()
+        Preferences.showInDock = false
+        return .terminateCancel
     }
 
     /// Clicking the Dock icon toggles the launcher, like the old Launchpad tile.
@@ -66,7 +77,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: L10n.t("Hide LaunchDeck", "隐藏 LaunchDeck"),
                      action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        menu.addItem(withTitle: L10n.t("Quit LaunchDeck", "退出 LaunchDeck"),
+        // Goes through applicationShouldTerminate: tucks into the menu bar.
+        menu.addItem(withTitle: L10n.t("Hide in Menu Bar", "收起到菜单栏"),
                      action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = menu
 

@@ -12,7 +12,7 @@ macOS 26 去掉了启动台。LaunchDeck 是一个原生（AppKit + Core Animati
 - **四指捏合**（拇指加三指）打开，**张开**关闭；界面跟着手指的动作逐渐出现或消失。点 Dock 图标也能开关
 - 全屏覆盖在模糊的桌面壁纸上，所有桌面空间、全屏应用之上都可用
 - 7×5 分页网格：触控板左右滑动（带惯性与边缘回弹），鼠标滚轮、页码圆点也能翻页
-- **文件夹**：把一个图标拖到另一个上停一下就合成文件夹，名字按类别自动取；点开后从图标原位展开，点标题改名，拖过面板边缘就能把应用拖出来
+- **文件夹**：把一个图标拖到另一个上停一下就合成文件夹，名字按类别自动取；拖到已有文件夹上直接松手即可放入。打开时应用从文件夹预览里飞出、面板从图标原位展开，关闭时再飞回去；点标题改名，拖过面板边缘就能把应用拖出来
 - **拖拽排序**：其他图标自动让位；拖到屏幕边缘停一下翻页；整理时图标抖动，点空白处或按 Esc 结束
 - 第一次打开时自动排好：系统应用在第一页，实用工具收进“其他”文件夹，第三方应用按类别（游戏、效率、开发工具……）归入文件夹
 - 新安装的应用名字前有蓝点，打开一次后消失
@@ -23,7 +23,9 @@ macOS 26 去掉了启动台。LaunchDeck 是一个原生（AppKit + Core Animati
 - 正在运行的应用下方有小圆点
 - 右键应用：打开 / 在访达中显示 / 从启动台隐藏（隐藏后不占网格位置，搜索仍能找到）
 - 键盘：方向键或 Tab 选择，回车打开，Esc 清空、关闭或取消拖拽，⌥⌫ / ⌘⌫ 删除，⌘V 粘贴
-- 登录时自动打开（右键空白处开启），开机启动时不会直接弹出界面
+- **菜单栏图标**：调整捏合灵敏度、开关彗星光效、是否在程序坞中显示、登录时打开、重新整理布局、检查更新
+- 在程序坞里退出或按 ⌘Q 时，LaunchDeck 会收起到菜单栏继续运行（捏合手势照常可用）；只有菜单栏里的“退出”才会真正退出
+- 登录时自动打开，开机启动时不会直接弹出界面
 - 内置自动更新
 
 **光与玻璃**
@@ -42,11 +44,11 @@ macOS 26 去掉了启动台。LaunchDeck 是一个原生（AppKit + Core Animati
    ```
 
 3. 想用四指捏合，请先到 **系统设置 → 触控板 → 更多手势**，关掉系统自带的四指捏合手势（“应用程序”或“启动台”），否则两者会同时响应。
-4. 把 LaunchDeck 固定在 Dock 上，在空白处右键打开“登录时打开”。
+4. 把 LaunchDeck 固定在 Dock 上，在菜单栏图标里打开“登录时打开”。不想占用程序坞的话，关掉“在程序坞中显示”即可只留在菜单栏。
 
 ### 更新
 
-LaunchDeck 每天会检查一次新版本。有更新时，右键空白处的菜单顶部会出现“更新到 x.y.z…”，确认后会自动下载、替换并重启。也可以随时右键选择“检查更新…”。
+LaunchDeck 每天会检查一次新版本。有更新时，菜单栏图标（或启动台空白处右键）的菜单里会出现“更新到 x.y.z…”，确认后会自动下载、替换并重启。也可以随时选择“检查更新…”。
 
 ## 从源码编译
 
@@ -86,13 +88,13 @@ debug 版可以跑一段脚本、把画面渲染成 PNG 后退出，不需要屏
 LAUNCHDECK_SNAPSHOT=/tmp LAUNCHDECK_LAYOUT_FILE=/tmp/layout.json LAUNCHDECK_SCENARIO=merge build/LaunchDeck.app/Contents/MacOS/LaunchDeck
 ```
 
-`LAUNCHDECK_SCENARIO` 可选 `folder`、`merge`、`reorder`、`dragout`、`refolder`、`page2`、`comet`；`LAUNCHDECK_QUERY` 会先输入一段搜索；`LAUNCHDECK_LAYOUT_FILE` 让测试不碰你真实的布局。
+`LAUNCHDECK_SCENARIO` 可选 `folder`、`folderanim`、`merge`、`reorder`、`intofolder`、`dragout`、`dragout2`、`refolder`、`page2`、`comet`；`LAUNCHDECK_QUERY` 会先输入一段搜索；`LAUNCHDECK_LAYOUT_FILE` 让测试不碰你真实的布局。
 
 ## 代码结构
 
 | 路径 | 内容 |
 |---|---|
-| `Sources/LaunchDeck/App` | 入口、窗口、显示/隐藏控制、登录项、自动更新、调试截图 |
+| `Sources/LaunchDeck/App` | 入口、窗口、显示/隐藏控制、菜单栏图标、偏好设置、登录项、自动更新、调试截图 |
 | `Sources/LaunchDeck/Catalog` | 应用扫描、图标与主色调、分类、拼音索引、壁纸模糊与取色 |
 | `Sources/LaunchDeck/Grid` | Core Animation 画布：翻页、拖拽、文件夹、搜索结果、光效、彗星尾迹、右键菜单 |
 | `Sources/LaunchDeck/Input` | 通过 MultitouchSupport 识别四指捏合 |

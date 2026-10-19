@@ -38,6 +38,7 @@ struct WallpaperSampler {
         var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0
         base.getHue(&h, saturation: &s, brightness: &v, alpha: nil)
         let lifted = NSColor(hue: h, saturation: min(1, s * 1.15), brightness: min(1, v * 0.7 + 0.42), alpha: 1)
-        return lifted.withAlphaComponent(0.42).cgColor
+        // Fairly dense, so the pane reads as solid glass rather than a thin film.
+        return lifted.withAlphaComponent(0.56).cgColor
     }
 }

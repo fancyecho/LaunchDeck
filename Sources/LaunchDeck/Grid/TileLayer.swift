@@ -37,6 +37,12 @@ final class TileLayer: PlainLayer {
     // Folder glass.
     private let folderBackground = PlainLayer()
     private let folderSheen = CAGradientLayer()
+    /// Darkens the bottom of the folder glass a touch, giving the pane thickness.
+    private let folderDepth = CAGradientLayer()
+    /// Light caught inside the top edge, shade inside the bottom: the glass's thickness.
+    private let folderBevel = CAGradientLayer()
+    private let folderBevelMask = PlainLayer()
+    private static let restingShadow: Float = 0.18
     private let folderRim = CAGradientLayer()
     private let folderRimMask = PlainLayer()
     private var miniLayers: [PlainLayer] = []
@@ -53,7 +59,18 @@ final class TileLayer: PlainLayer {
     init(itemID: String) {
         self.itemID = itemID
         super.init()
-        for l in [glowLayer, specular, folderSheen, folderRim] as [CALayer] { l.actions = Self.noActions }
+        for l in [glowLayer, specular, folderSheen, folderDepth, folderRim] as [CALayer] { l.actions = Self.noActions }
+        folderDepth.colors = [NSColor.black.withAlphaComponent(0).cgColor, NSColor.black.withAlphaComponent(0.16).cgColor]
+        folderDepth.locations = [0.5, 1]
+        folderBevel.actions = Self.noActions
+        folderBevel.colors = [NSColor.white.withAlphaComponent(0.38).cgColor, NSColor.white.withAlphaComponent(0).cgColor,
+                              NSColor.black.withAlphaComponent(0.12).cgColor]
+        folderBevel.locations = [0, 0.45, 1]
+        folderBevelMask.borderColor = NSColor.black.cgColor
+        folderBevelMask.cornerCurve = .continuous
+        folderBevel.mask = folderBevelMask
+        folderDepth.cornerCurve = .continuous
+        folderDepth.masksToBounds = true
 
         glowLayer.type = .radial
         glowLayer.startPoint = CGPoint(x: 0.5, y: 0.5)
@@ -81,7 +98,7 @@ final class TileLayer: PlainLayer {
         iconLayer.contentsGravity = .resizeAspect
         labelLayer.contentsGravity = .resize
         iconLayer.shadowColor = NSColor.black.cgColor
-        iconLayer.shadowOpacity = 0.3
+        iconLayer.shadowOpacity = Self.restingShadow
 
         specular.type = .radial
         specular.startPoint = CGPoint(x: 0.5, y: 0.5)
@@ -152,8 +169,8 @@ final class TileLayer: PlainLayer {
                 let corner = inner * 0.225
                 let innerRect = CGRect(x: s * 0.1, y: s * 0.1, width: inner, height: inner)
                 iconLayer.shadowPath = CGPath(roundedRect: innerRect, cornerWidth: corner, cornerHeight: corner, transform: nil)
-                iconLayer.shadowRadius = s * 0.06
-                iconLayer.shadowOffset = CGSize(width: 0, height: s * 0.03)
+                iconLayer.shadowRadius = s * 0.05
+                iconLayer.shadowOffset = CGSize(width: 0, height: s * 0.025)
                 highlightLayer.frame = CGRect(x: 0, y: -8, width: size.width, height: size.height + 14)
                 highlightLayer.cornerRadius = s * 0.28
 
@@ -166,10 +183,16 @@ final class TileLayer: PlainLayer {
                 folderBackground.cornerRadius = corner
                 folderSheen.frame = folderBackground.bounds
                 folderSheen.cornerRadius = corner
+                folderDepth.frame = folderBackground.bounds
+                folderDepth.cornerRadius = corner
+                folderBevel.frame = folderBackground.bounds
+                folderBevelMask.frame = folderBevel.bounds
+                folderBevelMask.cornerRadius = corner
+                folderBevelMask.borderWidth = s * 0.045
                 folderRim.frame = folderBackground.bounds
                 folderRimMask.frame = folderRim.bounds
                 folderRimMask.cornerRadius = corner
-                folderRimMask.borderWidth = max(1, s * 0.011)
+                folderRimMask.borderWidth = max(1, s * 0.016)
                 let dot = max(4, s * 0.05)
                 runningDot.bounds = CGRect(x: 0, y: 0, width: dot, height: dot)
                 runningDot.cornerRadius = dot / 2
@@ -195,7 +218,9 @@ final class TileLayer: PlainLayer {
                 iconLayer.contents = nil
                 if folderBackground.superlayer == nil {
                     iconLayer.addSublayer(folderBackground)
+                    folderBackground.addSublayer(folderDepth)
                     folderBackground.addSublayer(folderSheen)
+                    folderBackground.addSublayer(folderBevel)
                 }
                 layoutMiniIcons(icons, iconSize: s)
                 if folderRim.superlayer == nil { folderBackground.addSublayer(folderRim) }
@@ -233,7 +258,29 @@ final class TileLayer: PlainLayer {
             let col = CGFloat(i % columns), row = CGFloat(i / columns)
             l.frame = CGRect(x: pad + col * (mini + gap), y: pad + row * (mini + gap), width: mini, height: mini)
             l.contents = shown[i]
+            // A faint shadow lifts each mini icon off the glass.
+            let art = l.bounds.insetBy(dx: mini * 0.1, dy: mini * 0.1)
+            l.shadowPath = CGPath(roundedRect: art, cornerWidth: art.width * 0.225, cornerHeight: art.width * 0.225,
+                                  transform: nil)
+            l.shadowColor = NSColor.black.cgColor
+            l.shadowOpacity = 0.12
+            l.shadowRadius = max(1, mini * 0.06)
+            l.shadowOffset = CGSize(width: 0, height: mini * 0.03)
         }
+    }
+
+    /// Frame of mini icon `i` of a folder preview (a full icon canvas), in this
+    /// tile's coordinates. Used to fly apps out of, and back into, the folder.
+    func miniIconFrame(_ i: Int) -> CGRect? {
+        guard i < miniLayers.count else { return nil }
+        return convert(miniLayers[i].frame, from: folderBackground)
+    }
+
+    var miniIconCount: Int { miniLayers.count }
+
+    /// Hides the preview's mini icons while their full-size copies are in flight.
+    func setMiniIconsHidden(_ hidden: Bool) {
+        Motion.instantly { miniLayers.forEach { $0.opacity = hidden ? 0 : 1 } }
     }
 
     // MARK: - Glass & light
@@ -342,9 +389,9 @@ final class TileLayer: PlainLayer {
         if lifted { setHover(nil) }
         let s = m.iconSize
         let targets: [(String, Any)] = [
-            ("shadowRadius", lifted ? s * 0.15 : s * 0.06),
-            ("shadowOpacity", lifted ? Float(0.42) : Float(0.3)),
-            ("shadowOffset", NSValue(size: CGSize(width: 0, height: lifted ? s * 0.1 : s * 0.03))),
+            ("shadowRadius", lifted ? s * 0.14 : s * 0.05),
+            ("shadowOpacity", lifted ? Float(0.32) : Self.restingShadow),
+            ("shadowOffset", NSValue(size: CGSize(width: 0, height: lifted ? s * 0.09 : s * 0.025))),
         ]
         for (key, value) in targets {
             let from = iconLayer.presentation()?.value(forKey: key) ?? iconLayer.value(forKey: key)

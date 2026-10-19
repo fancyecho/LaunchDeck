@@ -814,14 +814,15 @@ final class LauncherCanvas: NSView {
         menu.addItem(ClosureMenuItem(L10n.t("Check for Updates…", "检查更新…")) { [weak self] in
             Updater.shared.checkInteractively(above: self?.window)
         })
-        menu.addItem(ClosureMenuItem(L10n.t("Quit LaunchDeck", "退出 LaunchDeck")) { NSApp.terminate(nil) })
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 
     @objc private func menuEnterEdit() { enterEditMode() }
     @objc private func menuExitEdit() { exitEditMode() }
 
-    @objc private func menuResetLayout() {
+    @objc private func menuResetLayout() { confirmResetLayout() }
+
+    func confirmResetLayout() {
         let alert = NSAlert()
         alert.messageText = L10n.t("Reset the layout?", "重置布局？")
         alert.informativeText = L10n.t(

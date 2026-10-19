@@ -19,6 +19,12 @@ struct OpenFolder {
 extension LauncherCanvas: NSTextFieldDelegate {
     private static let titleHeight: CGFloat = 70
     private static let panelCorner: CGFloat = 36
+    /// How far the inner-glow rings sit outside the glass (their shadow falls inside).
+    private static let edgeOutset: CGFloat = 24
+    /// Shared by the panel, its glass layers and the apps flying out, so everything
+    /// grows as one piece.
+    private static let openResponse: CGFloat = 0.5
+    private static let openDamping: CGFloat = 0.9
     private static let snapshotContext = CIContext(options: [.cacheIntermediates: false])
 
     var folderTitleFrame: CGRect {
@@ -39,6 +45,7 @@ extension LauncherCanvas: NSTextFieldDelegate {
 
     func openFolder(_ f: Folder) {
         guard folder == nil, let tile = tiles["f:" + f.id] else { return }
+        clearHover()  // the folder icon may be tilted under the pointer
         // A previous folder may still be animating closed: drop its tiles and
         // animations now so nothing from it lingers in this one.
         for l in [panel, panelContent, panelTitle, blurLayer, scrim] { l.removeAllAnimations() }
@@ -59,7 +66,10 @@ extension LauncherCanvas: NSTextFieldDelegate {
 
         let pad = (fm.cell.width * 0.32).rounded()
         let contentSize = CGSize(width: CGFloat(columns) * fm.cell.width, height: CGFloat(visibleRows) * fm.cell.height)
-        let panelSize = CGSize(width: contentSize.width + pad * 2, height: Self.titleHeight + contentSize.height + pad * 0.45)
+        // A scrolling folder's content reaches `inset` below its last visible row (the
+        // next row fades in there), so the panel has to be that much taller to hold it.
+        let bottom = rows > visibleRows ? inset : pad * 0.45
+        let panelSize = CGSize(width: contentSize.width + pad * 2, height: Self.titleHeight + contentSize.height + bottom)
         let panelFrame = CGRect(x: ((width - panelSize.width) / 2).rounded(),
                                 y: max(metrics.searchBarY, (metrics.size.height - panelSize.height) / 2 - 12).rounded(),
                                 width: panelSize.width, height: panelSize.height)
@@ -80,34 +90,17 @@ extension LauncherCanvas: NSTextFieldDelegate {
             panelContent.opacity = 1
             folderStrip.frame = CGRect(x: 0, y: inset, width: contentSize.width, height: CGFloat(rows) * fm.cell.height)
             renderFolderTitle(f.name)
-            applyScrollFade(rows > visibleRows, inset: inset)
+            // The scroll fade would hide apps flying in from outside the content
+            // area, so it goes on once they've landed.
+            applyScrollFade(false, inset: inset)
             blurLayer.contents = backdropImage
             blurLayer.opacity = backdropImage == nil ? 0 : 0.75
-            for l in [panelSheen, panelRim] as [CALayer?] {
-                guard let l else { continue }
-                l.frame = CGRect(origin: .zero, size: panelFrame.size)
-                l.mask?.frame = l.bounds
-                l.opacity = 1
-            }
+            for (l, _) in glassDecor { l.opacity = 1 }
         }
-        // Grow out of the folder icon.
-        panel.add(Motion.spring("bounds", from: NSValue(rect: CGRect(origin: .zero, size: from.size)),
-                                to: NSValue(rect: CGRect(origin: .zero, size: panelFrame.size)), response: 0.46, damping: 0.86),
-                  forKey: "bounds")
-        panel.add(Motion.spring("position", from: NSValue(point: CGPoint(x: from.midX, y: from.midY)),
-                                to: NSValue(point: CGPoint(x: panelFrame.midX, y: panelFrame.midY)), response: 0.46, damping: 0.86),
-                  forKey: "position")
-        panel.add(Motion.basic("cornerRadius", from: from.width * 0.225, to: Self.panelCorner, duration: 0.3), forKey: "corner")
-        panel.add(Motion.basic("opacity", from: 0.3, to: 1, duration: 0.16), forKey: "fade")
-
-        // The glass sheen only appears once the panel is near full size.
-        for l in [panelSheen, panelRim] as [CALayer?] {
-            guard let l else { continue }
-            let fadeIn = Motion.basic("opacity", from: 0, to: 1, duration: 0.24)
-            fadeIn.beginTime = CACurrentMediaTime() + 0.16
-            fadeIn.fillMode = .backwards
-            l.add(fadeIn, forKey: "fade")
-        }
+        // Grow out of the folder icon, glass edges and highlights riding along.
+        springGlass(from: from, to: panelFrame, fromCorner: from.width * 0.225, toCorner: Self.panelCorner,
+                    response: Self.openResponse, damping: Self.openDamping)
+        panel.add(Motion.basic("opacity", from: 0.4, to: 1, duration: 0.22), forKey: "fade")
         if let p = lastPointer { updateRimLights(toward: p) }
 
         let titleFade = Motion.basic("opacity", from: 0, to: 1, duration: 0.22)
@@ -115,7 +108,31 @@ extension LauncherCanvas: NSTextFieldDelegate {
         titleFade.fillMode = .backwards
         panelTitle.add(titleFade, forKey: "fade")
 
-        layoutFolderTiles(f.apps, animated: false, appear: true)
+        // Apps fly out of the folder icon's preview: each starts on its mini icon and
+        // rides the same spring as the panel, so it stays glued to the glass.
+        var origins: [CGRect] = []
+        if !reduceMotion {
+            let stripOrigin = CGPoint(x: from.minX + panelContent.frame.minX + folderStrip.frame.minX,
+                                      y: from.minY + panelContent.frame.minY + folderStrip.frame.minY)
+            for i in 0..<tile.miniIconCount {
+                guard let mini = tile.miniIconFrame(i) else { continue }
+                origins.append(folderLayer.convert(mini, from: tile).offsetBy(dx: -stripOrigin.x, dy: -stripOrigin.y))
+            }
+        }
+        tile.setMiniIconsHidden(true)
+        layoutFolderTiles(f.apps, animated: false, appear: true, origins: origins)
+        if rows > visibleRows {
+            // Rows below the fold stay hidden while the panel grows, then the scroll
+            // fade goes on and the next row eases in under it.
+            let id = f.id, firstHidden = visibleRows * columns
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak self] in
+                guard let self, let open = self.folder, open.id == id else { return }
+                self.applyScrollFade(true, inset: inset)
+                for (i, key) in open.apps.enumerated() where i >= firstHidden {
+                    if let t = self.folderTiles["a:" + key] { Motion.fade(t, to: 1, duration: 0.3) }
+                }
+            }
+        }
 
         // The sharp grid fades away to reveal its blurred copy underneath, so the
         // brightness never dips; both recede slightly for depth.
@@ -134,8 +151,10 @@ extension LauncherCanvas: NSTextFieldDelegate {
         chrome.hidesChrome = false
 
         let folderTile = tiles["f:" + f.id]
+        let closing = folderTiles
         let tilesToRemove = Array(folderTiles.values)
         folderTiles.removeAll()
+        clearHover()
 
         let cleanup = { [weak self] in
             guard let self else { return }
@@ -158,6 +177,7 @@ extension LauncherCanvas: NSTextFieldDelegate {
                 scrim.opacity = 0
                 folderTile?.opacity = 1
             }
+            folderTile?.setMiniIconsHidden(false)
             cleanup()
             return
         }
@@ -177,24 +197,31 @@ extension LauncherCanvas: NSTextFieldDelegate {
         blurLayer.add(blurOut, forKey: "fade")
         Motion.fade(scrim, to: 0, duration: 0.34)
 
-        Motion.fade(panelContent, to: 0, duration: 0.1)
         Motion.fade(panelTitle, to: 0, duration: 0.1)
-        for l in [panelSheen, panelRim] as [CALayer?] { if let l { Motion.fade(l, to: 0, duration: 0.08) } }
         if let folderTile, page == f.sourcePage {
-            // Shrink back into the folder icon.
+            // Shrink back into the folder icon, the apps flying home into its preview.
             let to = folderLayer.convert(folderTile.iconArtworkFrame, from: folderTile)
-            let current = panel.presentation()?.frame ?? panel.frame
-            Motion.instantly {
-                panel.bounds = CGRect(origin: .zero, size: to.size)
-                panel.position = CGPoint(x: to.midX, y: to.midY)
-                panel.cornerRadius = to.width * 0.225
-                panel.opacity = 0
+            folderTile.setMiniIconsHidden(false)
+            if reduceMotion || f.scroll > 1 {
+                Motion.fade(panelContent, to: 0, duration: 0.1)
+            } else {
+                panelContent.mask = nil  // let the apps fly out past the scroll fade
+                let stripOrigin = CGPoint(x: to.minX + panelContent.frame.minX + folderStrip.frame.minX,
+                                          y: to.minY + panelContent.frame.minY + folderStrip.frame.minY)
+                for (i, key) in f.apps.enumerated() {
+                    guard let t = closing["a:" + key] else { continue }
+                    guard i < folderTile.miniIconCount, let mini = folderTile.miniIconFrame(i) else {
+                        Motion.fade(t, to: 0, duration: 0.1)
+                        continue
+                    }
+                    let end = folderLayer.convert(mini, from: folderTile).offsetBy(dx: -stripOrigin.x, dy: -stripOrigin.y)
+                    fly(t, to: end, metrics: f.metrics)
+                }
             }
-            panel.add(Motion.spring("bounds", from: NSValue(rect: CGRect(origin: .zero, size: current.size)),
-                                    to: NSValue(rect: panel.bounds), response: 0.36, damping: 0.95), forKey: "bounds")
-            panel.add(Motion.spring("position", from: NSValue(point: CGPoint(x: current.midX, y: current.midY)),
-                                    to: NSValue(point: panel.position), response: 0.36, damping: 0.95), forKey: "position")
-            panel.add(Motion.basic("cornerRadius", from: Self.panelCorner, to: panel.cornerRadius, duration: 0.25), forKey: "corner")
+            let current = panel.presentation()?.frame ?? panel.frame
+            let corner = (panel.presentation()?.cornerRadius) ?? Self.panelCorner
+            springGlass(from: current, to: to, fromCorner: corner, toCorner: to.width * 0.225, response: 0.38, damping: 0.95)
+            Motion.instantly { panel.opacity = 0 }
             let fade = Motion.basic("opacity", from: 1, to: 0, duration: 0.12)
             fade.beginTime = CACurrentMediaTime() + 0.2
             fade.fillMode = .backwards
@@ -205,10 +232,33 @@ extension LauncherCanvas: NSTextFieldDelegate {
             Motion.instantly { folderTile.opacity = 1 }
             folderTile.add(reveal, forKey: "fade")
         } else {
+            Motion.fade(panelContent, to: 0, duration: 0.1)
             Motion.fade(panel, to: 0, duration: 0.18)
+            folderTile?.setMiniIconsHidden(false)
             folderTile.map { Motion.fade($0, to: 1, duration: 0.2) }
         }
         CATransaction.commit()
+    }
+
+    /// Where a folder tile must sit (and how small) so its icon covers `rect`.
+    private func placement(for rect: CGRect, metrics m: GridMetrics) -> (CGPoint, CGFloat) {
+        let k = rect.width / m.iconSize
+        let iconOffset = m.iconSize / 2 - TileLayer.size(for: m).height / 2
+        return (CGPoint(x: rect.midX, y: rect.midY - iconOffset * k), k)
+    }
+
+    /// Closing: shrinks an app tile into its mini icon slot, then lets it vanish
+    /// as the folder icon fades back in under it.
+    private func fly(_ t: TileLayer, to rect: CGRect, metrics m: GridMetrics) {
+        let (pos, k) = placement(for: rect, metrics: m)
+        Motion.move(t, to: pos, response: 0.38, damping: 0.95)
+        Motion.scale(t, to: k, response: 0.38, damping: 0.95)
+        Motion.fade(t.labelLayer, to: 0, duration: 0.1)
+        let fade = Motion.basic("opacity", from: 1, to: 0, duration: 0.1)
+        fade.beginTime = CACurrentMediaTime() + 0.22
+        fade.fillMode = .backwards
+        Motion.instantly { t.opacity = 0 }
+        t.add(fade, forKey: "fade")
     }
 
     /// When a folder scrolls, its contents fade out at the top and bottom edges
@@ -268,51 +318,117 @@ extension LauncherCanvas: NSTextFieldDelegate {
         panel.sublayers?.first { $0.name == "rim" } as? CAGradientLayer
     }
 
+    /// The panel's glass layers (and their masks and edge rings) with how far each
+    /// sits inside its parent; negative means outside.
+    private var glassDecor: [(CALayer, CGFloat)] {
+        var out: [(CALayer, CGFloat)] = []
+        for l in panel.sublayers ?? [] where ["sheen", "rim", "innerLight", "innerShade"].contains(l.name ?? "") {
+            out.append((l, 0))
+            if let m = l.mask { out.append((m, 0)) }
+            for c in l.sublayers ?? [] where c.name == "edge" { out.append((c, -Self.edgeOutset)) }
+        }
+        return out
+    }
+
+    /// Springs the panel and every glass layer in it between two frames together,
+    /// so highlights and edges stay attached to the glass as it grows or shrinks.
+    private func springGlass(from: CGRect, to: CGRect, fromCorner: CGFloat, toCorner: CGFloat,
+                             response: CGFloat, damping: CGFloat) {
+        func spring(_ l: CALayer, _ key: String, _ a: Any, _ b: Any) {
+            l.add(Motion.spring(key, from: a, to: b, response: response, damping: damping), forKey: key)
+        }
+        Motion.instantly {
+            panel.bounds = CGRect(origin: .zero, size: to.size)
+            panel.position = CGPoint(x: to.midX, y: to.midY)
+            panel.cornerRadius = toCorner
+        }
+        spring(panel, "bounds", NSValue(rect: CGRect(origin: .zero, size: from.size)), NSValue(rect: panel.bounds))
+        spring(panel, "position", NSValue(point: CGPoint(x: from.midX, y: from.midY)), NSValue(point: panel.position))
+        spring(panel, "cornerRadius", fromCorner, toCorner)
+        for (l, inset) in glassDecor {
+            let a = CGRect(origin: .zero, size: from.size).insetBy(dx: inset, dy: inset)
+            let b = CGRect(origin: .zero, size: to.size).insetBy(dx: inset, dy: inset)
+            Motion.instantly {
+                l.frame = b
+                l.cornerRadius = max(0, toCorner - inset)
+            }
+            spring(l, "bounds", NSValue(rect: CGRect(origin: .zero, size: a.size)), NSValue(rect: CGRect(origin: .zero, size: b.size)))
+            spring(l, "position", NSValue(point: CGPoint(x: a.midX, y: a.midY)), NSValue(point: CGPoint(x: b.midX, y: b.midY)))
+            spring(l, "cornerRadius", max(0, fromCorner - inset), max(0, toCorner - inset))
+        }
+    }
+
     /// Clear glass: an almost transparent body, a crisp hairline edge and a soft
     /// highlight falling from the top, so the wallpaper shows through rather than
     /// being washed grey.
+    /// Glass with some weight: a denser frosted body, a highlight across the top,
+    /// light caught inside the upper edge and a little shade inside the lower one
+    /// (the glass's thickness), a hairline rim turned toward the pointer and a deep,
+    /// soft shadow underneath.
     private func styleGlassPanel() {
         panel.masksToBounds = false
         panel.cornerCurve = .continuous
-        panel.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
-        // A faint base edge; the gradient rim on top carries the light.
-        panel.borderColor = NSColor.white.withAlphaComponent(0.1).cgColor
+        panel.backgroundColor = NSColor.white.withAlphaComponent(0.13).cgColor
+        panel.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
         panel.borderWidth = 0.5
         panel.shadowColor = NSColor.black.cgColor
-        panel.shadowOpacity = 0.14
-        panel.shadowRadius = 44
-        panel.shadowOffset = CGSize(width: 0, height: 20)
+        panel.shadowOpacity = 0.26
+        panel.shadowRadius = 50
+        panel.shadowOffset = CGSize(width: 0, height: 26)
 
         guard panelSheen == nil else { return }
+        let still: [String: CAAction] = ["bounds": NSNull(), "position": NSNull(), "opacity": NSNull(), "frame": NSNull(),
+                                         "cornerRadius": NSNull(), "colors": NSNull(), "startPoint": NSNull(),
+                                         "endPoint": NSNull()]
+
         let sheen = CAGradientLayer()
         sheen.name = "sheen"
-        sheen.colors = [NSColor.white.withAlphaComponent(0.16).cgColor,
-                        NSColor.white.withAlphaComponent(0.04).cgColor,
+        sheen.colors = [NSColor.white.withAlphaComponent(0.2).cgColor,
+                        NSColor.white.withAlphaComponent(0.05).cgColor,
                         NSColor.white.withAlphaComponent(0).cgColor]
-        sheen.locations = [0, 0.35, 1]
-        sheen.cornerRadius = Self.panelCorner
+        sheen.locations = [0, 0.3, 1]
         sheen.cornerCurve = .continuous
         sheen.masksToBounds = true
-        sheen.actions = ["bounds": NSNull(), "position": NSNull(), "opacity": NSNull(), "frame": NSNull()]
+        sheen.actions = still
         panel.insertSublayer(sheen, at: 0)
+
+        // Inner edges: a ring just outside the glass casts its shadow inward, clipped
+        // to the glass, so light pools softly along the inside of the rim.
+        func innerEdge(_ name: String, color: NSColor, opacity: Float, offset: CGFloat) -> CALayer {
+            let clip = PlainLayer()
+            clip.name = name
+            clip.masksToBounds = true
+            clip.cornerCurve = .continuous
+            let edge = PlainLayer()
+            edge.name = "edge"
+            edge.borderWidth = Self.edgeOutset
+            edge.borderColor = NSColor.black.cgColor
+            edge.cornerCurve = .continuous
+            edge.shadowColor = color.cgColor
+            edge.shadowOpacity = opacity
+            edge.shadowRadius = 12
+            edge.shadowOffset = CGSize(width: 0, height: offset)
+            clip.addSublayer(edge)
+            return clip
+        }
+        panel.insertSublayer(innerEdge("innerLight", color: .white, opacity: 0.55, offset: 7), above: sheen)
+        panel.insertSublayer(innerEdge("innerShade", color: .black, opacity: 0.22, offset: -7), above: sheen)
 
         // Rim light: a gradient seen only through a hairline ring, its bright side
         // turned toward the pointer (see updateRimLights).
         let rim = CAGradientLayer()
         rim.name = "rim"
-        rim.actions = ["bounds": NSNull(), "position": NSNull(), "opacity": NSNull(), "frame": NSNull(),
-                       "colors": NSNull(), "startPoint": NSNull(), "endPoint": NSNull()]
+        rim.actions = still
         rim.colors = [NSColor.white.withAlphaComponent(0.6).cgColor,
                       NSColor.white.withAlphaComponent(0.1).cgColor,
                       NSColor.white.withAlphaComponent(0.2).cgColor]
         rim.locations = [0, 0.55, 1]
         let ring = PlainLayer()
         ring.borderColor = NSColor.black.cgColor
-        ring.borderWidth = 1.2
-        ring.cornerRadius = Self.panelCorner
+        ring.borderWidth = 1.5
         ring.cornerCurve = .continuous
         rim.mask = ring
-        panel.insertSublayer(rim, above: sheen)
+        panel.addSublayer(rim)
     }
 
     private func renderFolderTitle(_ name: String) {
@@ -331,7 +447,9 @@ extension LauncherCanvas: NSTextFieldDelegate {
     }
 
     /// Places folder tiles in `order`; the placeholder key leaves a gap during drags.
-    func layoutFolderTiles(_ order: [String], animated: Bool, appear: Bool = false) {
+    /// `origins` (opening only) are the mini icon frames, in strip coordinates, that
+    /// the first apps fly out from.
+    func layoutFolderTiles(_ order: [String], animated: Bool, appear: Bool = false, origins: [CGRect] = []) {
         guard let f = folder else { return }
         let draggedID = drag?.item.id
         var live = Set<String>()
@@ -350,7 +468,19 @@ extension LauncherCanvas: NSTextFieldDelegate {
                 Motion.instantly { t.position = target }
                 folderStrip.addSublayer(t)
                 folderTiles[id] = t
-                if appear {
+                if appear, f.rows > f.visibleRows, i >= f.visibleRows * f.columns {
+                    Motion.instantly { t.opacity = 0 }  // revealed once the scroll fade is on
+                } else if appear, i < origins.count {
+                    let (start, k) = placement(for: origins[i], metrics: f.metrics)
+                    t.add(Motion.spring("position", from: NSValue(point: start), to: NSValue(point: target),
+                                        response: Self.openResponse, damping: Self.openDamping), forKey: "move")
+                    t.add(Motion.spring("transform.scale", from: k, to: 1, response: Self.openResponse,
+                                        damping: Self.openDamping), forKey: "scale")
+                    let label = Motion.basic("opacity", from: 0, to: 1, duration: 0.2)
+                    label.beginTime = now + 0.16
+                    label.fillMode = .backwards
+                    t.labelLayer.add(label, forKey: "fade")
+                } else if appear {
                     let begin = now + 0.08 + Double(i) * 0.012
                     let fade = Motion.basic("opacity", from: 0, to: 1, duration: 0.2)
                     fade.beginTime = begin

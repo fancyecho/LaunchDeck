@@ -145,10 +145,10 @@ final class LauncherController {
 
     // Pinch tuning. The reveal starts once the fingers have closed in by ~12% and is
     // complete at ~40%; letting go commits only past half of that range.
-    private static let openStart: CGFloat = 0.88
-    private static let openEnd: CGFloat = 0.6
-    private static let closeStart: CGFloat = 1.12
-    private static let closeEnd: CGFloat = 1.5
+    private static var openStart: CGFloat { Preferences.pinchSensitivity.thresholds.openStart }
+    private static var openEnd: CGFloat { Preferences.pinchSensitivity.thresholds.openEnd }
+    private static var closeStart: CGFloat { Preferences.pinchSensitivity.thresholds.closeStart }
+    private static var closeEnd: CGFloat { Preferences.pinchSensitivity.thresholds.closeEnd }
     private static let commitProgress: CGFloat = 0.5
 
     private func pinchChanged(_ ratio: CGFloat, travel: CGFloat) {

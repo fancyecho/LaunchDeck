@@ -58,7 +58,7 @@ extension LauncherCanvas {
     /// soft coloured light (plus the icon's own tilt and glow).
     func refreshLightMode() {
         let hovering = hoveredTile != nil
-        let showComet = isShown && pointerInside && !hovering && drag == nil
+        let showComet = isShown && pointerInside && !hovering && drag == nil && Preferences.cometTrail
         let showLight = isShown && hovering
         if comet.opacity != (showComet ? 1 : 0) { Motion.fade(comet, to: showComet ? 1 : 0, duration: showComet ? 0.22 : 0.14) }
         if pointerLight.opacity != (showLight ? 1 : 0) { Motion.fade(pointerLight, to: showLight ? 1 : 0, duration: 0.28) }
