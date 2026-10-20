@@ -60,7 +60,7 @@ final class TileLayer: PlainLayer {
         self.itemID = itemID
         super.init()
         for l in [glowLayer, specular, folderSheen, folderDepth, folderRim] as [CALayer] { l.actions = Self.noActions }
-        folderDepth.colors = [NSColor.black.withAlphaComponent(0).cgColor, NSColor.black.withAlphaComponent(0.16).cgColor]
+        folderDepth.colors = [NSColor.black.withAlphaComponent(0).cgColor, NSColor.black.withAlphaComponent(0.05).cgColor]
         folderDepth.locations = [0.5, 1]
         folderBevel.actions = Self.noActions
         folderBevel.colors = [NSColor.white.withAlphaComponent(0.38).cgColor, NSColor.white.withAlphaComponent(0).cgColor,
@@ -115,8 +115,8 @@ final class TileLayer: PlainLayer {
         folderBackground.cornerCurve = .continuous
         folderBackground.masksToBounds = false
         folderBackground.backgroundColor = NSColor.white.withAlphaComponent(0.16).cgColor
-        folderSheen.colors = [NSColor.white.withAlphaComponent(0.3).cgColor,
-                              NSColor.white.withAlphaComponent(0.06).cgColor,
+        folderSheen.colors = [NSColor.white.withAlphaComponent(0.2).cgColor,
+                              NSColor.white.withAlphaComponent(0.04).cgColor,
                               NSColor.white.withAlphaComponent(0).cgColor]
         folderSheen.locations = [0, 0.45, 1]
         folderSheen.cornerCurve = .continuous
@@ -192,7 +192,7 @@ final class TileLayer: PlainLayer {
                 folderRim.frame = folderBackground.bounds
                 folderRimMask.frame = folderRim.bounds
                 folderRimMask.cornerRadius = corner
-                folderRimMask.borderWidth = max(1, s * 0.016)
+                folderRimMask.borderWidth = max(0.75, s * 0.009)
                 let dot = max(4, s * 0.05)
                 runningDot.bounds = CGRect(x: 0, y: 0, width: dot, height: dot)
                 runningDot.cornerRadius = dot / 2
@@ -220,7 +220,6 @@ final class TileLayer: PlainLayer {
                     iconLayer.addSublayer(folderBackground)
                     folderBackground.addSublayer(folderDepth)
                     folderBackground.addSublayer(folderSheen)
-                    folderBackground.addSublayer(folderBevel)
                 }
                 layoutMiniIcons(icons, iconSize: s)
                 if folderRim.superlayer == nil { folderBackground.addSublayer(folderRim) }
@@ -246,26 +245,20 @@ final class TileLayer: PlainLayer {
         }
         while miniLayers.count > shown.count { miniLayers.removeLast().removeFromSuperlayer() }
 
-        // Generous padding and gutters so the preview reads as a calm grid, not a
-        // mosaic; small folders use 2×2 so a couple of apps don't huddle in a corner.
-        // Each mini icon is a full icon canvas, so its own ~10% margin adds to the gap.
+        // Always a 3×3 grid laid out by the visible artwork (each mini icon is a full
+        // icon canvas with a ~10% transparent margin), so the art fills the pane
+        // evenly with the same padding all round: the classic Launchpad proportions.
         let inner = s * 0.8
-        let columns = shown.count <= 4 ? 2 : 3
-        let pad = inner * (columns == 2 ? 0.14 : 0.12)
-        let gap = inner * (columns == 2 ? 0.07 : 0.055)
-        let mini = (inner - pad * 2 - gap * CGFloat(columns - 1)) / CGFloat(columns)
+        let pad = inner * 0.11
+        let gap = inner * 0.065
+        let art = (inner - pad * 2 - gap * 2) / 3
+        let canvas = art / 0.8
         for (i, l) in miniLayers.enumerated() {
-            let col = CGFloat(i % columns), row = CGFloat(i / columns)
-            l.frame = CGRect(x: pad + col * (mini + gap), y: pad + row * (mini + gap), width: mini, height: mini)
+            let col = CGFloat(i % 3), row = CGFloat(i / 3)
+            let x = pad + col * (art + gap) - (canvas - art) / 2
+            let y = pad + row * (art + gap) - (canvas - art) / 2
+            l.frame = CGRect(x: x, y: y, width: canvas, height: canvas)
             l.contents = shown[i]
-            // A faint shadow lifts each mini icon off the glass.
-            let art = l.bounds.insetBy(dx: mini * 0.1, dy: mini * 0.1)
-            l.shadowPath = CGPath(roundedRect: art, cornerWidth: art.width * 0.225, cornerHeight: art.width * 0.225,
-                                  transform: nil)
-            l.shadowColor = NSColor.black.cgColor
-            l.shadowOpacity = 0.12
-            l.shadowRadius = max(1, mini * 0.06)
-            l.shadowOffset = CGSize(width: 0, height: mini * 0.03)
         }
     }
 
@@ -309,9 +302,9 @@ final class TileLayer: PlainLayer {
     /// Points the bright side of the folder's rim toward the light (the pointer).
     /// `direction` is a unit vector from the folder toward the light, y down.
     func setRimLight(direction d: CGVector, strength: CGFloat) {
-        let bright = NSColor.white.withAlphaComponent(0.45 + 0.45 * strength).cgColor
-        let mid = NSColor.white.withAlphaComponent(0.14).cgColor
-        let back = NSColor.white.withAlphaComponent(0.22 + 0.1 * strength).cgColor
+        let bright = NSColor.white.withAlphaComponent(0.4 + 0.35 * strength).cgColor
+        let mid = NSColor.white.withAlphaComponent(0.12).cgColor
+        let back = NSColor.white.withAlphaComponent(0.16 + 0.08 * strength).cgColor
         Motion.instantly {
             folderRim.colors = [bright, mid, back]
             folderRim.locations = [0, 0.55, 1]
