@@ -6,6 +6,26 @@ class PlainLayer: CALayer {
     override func action(forKey event: String) -> CAAction? { nil }
 }
 
+/// System display settings the hand-drawn glass must honour itself. Real Liquid
+/// Glass (the search bar) frosts and outlines on its own; these layers don't.
+enum DisplayOptions {
+    static var reduceTransparency: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency || debugOverride("LAUNCHDECK_REDUCE_TRANSPARENCY")
+    }
+    static var increaseContrast: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast || debugOverride("LAUNCHDECK_INCREASE_CONTRAST")
+    }
+
+    /// Debug builds can fake either setting for snapshot runs.
+    private static func debugOverride(_ key: String) -> Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.environment[key] == "1"
+        #else
+        return false
+        #endif
+    }
+}
+
 enum Motion {
     /// SwiftUI-style spring parameters mapped onto CASpringAnimation.
     static func spring(_ keyPath: String, from: Any?, to: Any?, response: CGFloat = 0.42,

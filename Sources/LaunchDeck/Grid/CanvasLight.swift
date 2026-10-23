@@ -19,6 +19,7 @@ extension LauncherCanvas {
     override func mouseExited(with event: NSEvent) {
         pointerInside = false
         clearHover()
+        updateSearchHover(at: CGPoint(x: -1000, y: -1000))
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -35,6 +36,7 @@ extension LauncherCanvas {
         movePointerLight(to: p)
         feedComet(p)
         updateHover(at: p)
+        updateSearchHover(at: p)
         updateRimLights(toward: p)
     }
 
@@ -58,7 +60,7 @@ extension LauncherCanvas {
     /// soft coloured light (plus the icon's own tilt and glow).
     func refreshLightMode() {
         let hovering = hoveredTile != nil
-        let showComet = isShown && pointerInside && !hovering && drag == nil && Preferences.cometTrail
+        let showComet = isShown && pointerInside && !hovering && !chrome.isHovered && drag == nil && Preferences.cometTrail
         let showLight = isShown && hovering
         if comet.opacity != (showComet ? 1 : 0) { Motion.fade(comet, to: showComet ? 1 : 0, duration: showComet ? 0.22 : 0.14) }
         if pointerLight.opacity != (showLight ? 1 : 0) { Motion.fade(pointerLight, to: showLight ? 1 : 0, duration: 0.28) }
@@ -151,9 +153,7 @@ extension LauncherCanvas {
             let f = panel.frame
             let (d, strength) = light(from: CGPoint(x: f.midX, y: f.midY))
             Motion.instantly {
-                rim.colors = [NSColor.white.withAlphaComponent(0.4 + 0.4 * strength).cgColor,
-                              NSColor.white.withAlphaComponent(0.1).cgColor,
-                              NSColor.white.withAlphaComponent(0.2).cgColor]
+                rim.colors = Self.panelRimColors(strength: strength)
                 rim.startPoint = CGPoint(x: 0.5 + 0.5 * d.dx, y: 0.5 + 0.5 * d.dy)
                 rim.endPoint = CGPoint(x: 0.5 - 0.5 * d.dx, y: 0.5 - 0.5 * d.dy)
             }

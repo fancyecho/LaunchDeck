@@ -6,8 +6,9 @@ import AppKit
 ///
 ///   LAUNCHDECK_SNAPSHOT=<dir>        where PNGs go (required)
 ///   LAUNCHDECK_QUERY=<text>          type a search after opening
-///   LAUNCHDECK_SCENARIO=folder|merge|reorder|page2
+///   LAUNCHDECK_SCENARIO=folder|merge|reorder|page2|searchbar
 ///   LAUNCHDECK_LAYOUT_FILE=<path>    use a scratch layout instead of the real one
+///   LAUNCHDECK_REDUCE_TRANSPARENCY=1 / LAUNCHDECK_INCREASE_CONTRAST=1  fake those settings
 enum DebugSnapshot {
     static func runIfRequested(window: NSWindow, canvas: LauncherCanvas) {
         let env = ProcessInfo.processInfo.environment
@@ -32,7 +33,20 @@ enum DebugSnapshot {
                     canvas.activate(canvas.pages[0][i])
                 }
             }))
-            steps.append((0.9, { capture(canvas, "\(dir)/folder.png") }))
+            // Mid-spring, to check the glass and its frost stay aligned while growing.
+            steps.append((0.09, { capture(canvas, "\(dir)/folder-opening.png") }))
+            steps.append((0.81, { capture(canvas, "\(dir)/folder.png") }))
+            steps.append((0.05, { canvas.closeFolder(animated: true) }))
+            steps.append((0.12, { capture(canvas, "\(dir)/folder-closing.png") }))
+        case "searchbar"?:
+            // Walks the bar through its states, a second each, for screen captures:
+            // resting lens, hovered, focused, composing pinyin, committed text.
+            let none = NSRange(location: NSNotFound, length: 0)
+            steps.append((1.0, { canvas.chrome.isHovered = true }))
+            steps.append((1.0, { canvas.chrome.isHovered = false; canvas.focusSearch() }))
+            steps.append((1.0, { canvas.setMarkedText("wei'xin", selectedRange: none, replacementRange: none) }))
+            steps.append((1.0, { canvas.insertText("微信", replacementRange: none) }))
+            steps.append((1.0, {}))
         case "dragout"?:
             // Open the first folder, drag its first app out past the panel and drop it on the grid.
             steps.append((0.1, {
@@ -206,14 +220,7 @@ enum DebugSnapshot {
     }
 
     private static func type(_ text: String, into canvas: LauncherCanvas) {
-        for ch in text {
-            let s = String(ch)
-            if let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-                                        windowNumber: 0, context: nil, characters: s,
-                                        charactersIgnoringModifiers: s, isARepeat: false, keyCode: 0) {
-                _ = canvas.handleKey(e)
-            }
-        }
+        canvas.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
     }
 
     private static func capture(_ canvas: LauncherCanvas, _ path: String) {

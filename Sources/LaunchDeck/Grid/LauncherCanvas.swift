@@ -77,7 +77,7 @@ final class LauncherCanvas: NSView {
 
     // Mouse.
     enum PressTarget: Equatable {
-        case gridItem(Int), folderItem(Int), result(Int), dot(Int), folderTitle, background, panelBackground
+        case gridItem(Int), folderItem(Int), result(Int), dot(Int), folderTitle, background, panelBackground, searchBar
     }
     struct Press {
         var point: CGPoint
@@ -120,7 +120,7 @@ final class LauncherCanvas: NSView {
         blurLayer.contentsGravity = .resize
         blurLayer.opacity = 0
         // Barely-there dimming: enough focus on an open folder without greying the wallpaper.
-        scrim.backgroundColor = NSColor.black.withAlphaComponent(0.05).cgColor
+        scrim.backgroundColor = NSColor.black.withAlphaComponent(0.12).cgColor
         scrim.opacity = 0
 
         pointerLight.type = .radial
@@ -154,6 +154,13 @@ final class LauncherCanvas: NSView {
                 self?.refreshRunning()
             })
         }
+        // Reduce Transparency / Increase Contrast flipped while the launcher is up:
+        // re-frost the folder glass now rather than on the next show.
+        workspaceObservers.append(center.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.refreshGlassTints()
+        })
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -165,7 +172,7 @@ final class LauncherCanvas: NSView {
     var width: CGFloat { metrics.size.width }
     var pages: [[LayoutItem]] { store.pages }
     var pageCount: Int { max(1, store.pages.count) }
-    var isSearching: Bool { !chrome.query.isEmpty }
+    var isSearching: Bool { !searchText.isEmpty }
     var isEditingText: Bool { titleField != nil }
 
     // MARK: - Layout
@@ -225,7 +232,10 @@ final class LauncherCanvas: NSView {
     }
 
     func glassTint(slot: Int) -> CGColor {
-        guard let sampler else { return NSColor.white.withAlphaComponent(0.16).cgColor }
+        guard let sampler else {
+            return DisplayOptions.reduceTransparency ? NSColor(white: 0.86, alpha: 0.92).cgColor
+                                                     : NSColor.white.withAlphaComponent(0.16).cgColor
+        }
         return sampler.glassTint(at: metrics.center(for: slot), in: metrics.size)
     }
 
@@ -478,7 +488,7 @@ final class LauncherCanvas: NSView {
         layoutSubtreeIfNeeded()
         closeFolder(animated: false)
         exitEditMode()
-        setQuery("")
+        resetSearch()
         selection = nil
         refreshSelection()
         TileLayer.reduceMotion = reduceMotion
@@ -629,7 +639,7 @@ final class LauncherCanvas: NSView {
         for (id, t) in resultTiles where t.superlayer !== resultsLayer { resultTiles[id] = nil }
         for (id, t) in folderTiles where t.superlayer !== folderStrip { folderTiles[id] = nil }
         closeFolder(animated: false)
-        setQuery("")
+        resetSearch()
         exitEditMode()
         clearHover()
         rebuildTiles()
@@ -676,7 +686,9 @@ final class LauncherCanvas: NSView {
         if titleField != nil { finishRenaming() }
 
         let target: PressTarget
-        if folder != nil {
+        if searchBarContains(p) {
+            target = .searchBar
+        } else if folder != nil {
             if let i = folderIndex(at: p) {
                 target = .folderItem(i)
             } else if folderTitleFrame.contains(p) {
@@ -772,11 +784,16 @@ final class LauncherCanvas: NSView {
             beginRenaming()
         case .panelBackground:
             if editing { exitEditMode() }
+        case .searchBar:
+            focusSearch()
         case .background:
             if folder != nil {
                 closeFolder(animated: true)
             } else if editing {
                 exitEditMode()
+            } else if chrome.isFocused, !isSearching {
+                // A click away from an empty, focused bar just lets go of it.
+                unfocusSearch()
             } else {
                 dismissHandler?()
             }
@@ -866,6 +883,12 @@ final class LauncherCanvas: NSView {
     /// Returns true when the event was consumed.
     func handleKey(_ event: NSEvent) -> Bool {
         guard isShown else { return false }
+        // While an input method is composing, every key is its: arrows and digits
+        // pick candidates, return commits, esc cancels.
+        if hasMarkedText(), let context = inputContext {
+            _ = context.handleEvent(event)
+            return true
+        }
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
         switch event.keyCode {
@@ -873,6 +896,7 @@ final class LauncherCanvas: NSView {
             if drag != nil { cancelDrag() }
             else if folder != nil { closeFolder(animated: true) }
             else if isSearching { setQuery("") }
+            else if chrome.isFocused { unfocusSearch() }
             else if editing { exitEditMode() }
             else { dismissHandler?() }
             return true
@@ -902,24 +926,22 @@ final class LauncherCanvas: NSView {
         if mods.contains(.command) {
             if event.charactersIgnoringModifiers?.lowercased() == "v",
                let text = NSPasteboard.general.string(forType: .string) {
-                setQuery(chrome.query + text.components(separatedBy: .newlines).joined(separator: " "))
+                typeIntoSearch(text)
                 return true
             }
             return false
         }
         if mods.contains(.control) { return false }
 
-        // Raw characters, before any input method: "wx" with a Chinese IME on still searches pinyin.
         guard let chars = event.characters else { return false }
         let scalars = chars.unicodeScalars.filter {
             !CharacterSet.controlCharacters.contains($0) && !(0xF700...0xF8FF).contains($0.value)
         }
         guard !scalars.isEmpty else { return false }
-        let text = String(String.UnicodeScalarView(scalars))
-        if chrome.query.isEmpty, text.trimmingCharacters(in: .whitespaces).isEmpty { return true }
-        if folder != nil { closeFolder(animated: true) }
-        exitEditMode()
-        setQuery(chrome.query + text)
+        // Through the input method, so Chinese (and any other) input sources work;
+        // plain layouts come straight back through insertText.
+        if let context = inputContext, context.handleEvent(event) { return true }
+        typeIntoSearch(String(String.UnicodeScalarView(scalars)))
         return true
     }
 

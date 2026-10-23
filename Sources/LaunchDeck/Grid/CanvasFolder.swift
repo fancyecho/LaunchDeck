@@ -41,6 +41,17 @@ extension LauncherCanvas: NSTextFieldDelegate {
         return m
     }
 
+    /// Picks 4–6 columns so the last row is as full as possible (9 apps: 5 + 4,
+    /// not 6 + 3), preferring the wider panel on a tie. Big folders use all 6.
+    static func folderColumns(for count: Int) -> Int {
+        guard count > 4 else { return max(count, 3) }
+        guard count <= 18 else { return 6 }
+        return (4...6).min { a, b in
+            let gapA = (a - count % a) % a, gapB = (b - count % b) % b
+            return gapA != gapB ? gapA < gapB : a > b
+        } ?? 6
+    }
+
     // MARK: - Open / close
 
     func openFolder(_ f: Folder) {
@@ -53,7 +64,7 @@ extension LauncherCanvas: NSTextFieldDelegate {
         folderTiles.removeAll()
         let fm = folderMetrics()
         let n = f.apps.count
-        let columns = min(6, max(4, n))
+        let columns = Self.folderColumns(for: n)
         let rows = max(1, (n + columns - 1) / columns)
         let available = metrics.size.height - metrics.searchBarY * 2 - Self.titleHeight
         let visibleRows = min(rows, 4, max(1, Int(available / fm.cell.height)))
@@ -63,6 +74,8 @@ extension LauncherCanvas: NSTextFieldDelegate {
         selection = nil
         refreshSelection()
         chrome.hidesChrome = true
+        chrome.isFocused = false
+        chrome.isHovered = false
 
         let pad = (fm.cell.width * 0.32).rounded()
         let contentSize = CGSize(width: CGFloat(columns) * fm.cell.width, height: CGFloat(visibleRows) * fm.cell.height)
@@ -75,6 +88,9 @@ extension LauncherCanvas: NSTextFieldDelegate {
                                 width: panelSize.width, height: panelSize.height)
         let from = folderLayer.convert(tile.iconArtworkFrame, from: tile)
         let backdropImage = blurredGridSnapshot()
+        // The frost covers the panel's own body colour, so the solid Reduce
+        // Transparency body only shows without it.
+        let frostImage = DisplayOptions.reduceTransparency ? nil : frostSnapshot()
 
         Motion.instantly {
             folderLayer.isHidden = false
@@ -95,6 +111,7 @@ extension LauncherCanvas: NSTextFieldDelegate {
             applyScrollFade(false, inset: inset)
             blurLayer.contents = backdropImage
             blurLayer.opacity = backdropImage == nil ? 0 : 0.75
+            panelFrostImage?.contents = frostImage
             for (l, _) in glassDecor { l.opacity = 1 }
         }
         // Grow out of the folder icon, glass edges and highlights riding along.
@@ -164,6 +181,7 @@ extension LauncherCanvas: NSTextFieldDelegate {
                 guard self.folder == nil else { return }
                 self.folderLayer.isHidden = true
                 self.blurLayer.contents = nil
+                self.panelFrostImage?.contents = nil
             }
         }
 
@@ -281,7 +299,30 @@ extension LauncherCanvas: NSTextFieldDelegate {
 
     /// Renders the grid as it looks right now and blurs it, for the folder backdrop.
     private func blurredGridSnapshot() -> CGImage? {
-        let scale: CGFloat = 0.5
+        guard let image = renderRoot(scale: 0.5, withWallpaper: false) else { return nil }
+        let source = CIImage(cgImage: image)
+        // Keep the blurred icons vivid so the backdrop reads as colour, not grey haze.
+        let blurred = source.clampedToExtent()
+            .applyingGaussianBlur(sigma: 15)
+            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.6, kCIInputBrightnessKey: 0.03])
+            .cropped(to: source.extent)
+        return Self.snapshotContext.createCGImage(blurred, from: source.extent)
+    }
+
+    /// The panel's own frost: wallpaper and grid diffused far more than the backdrop,
+    /// so through the glass the icons melt into soft washes of colour instead of
+    /// reading as smudges. Kept a touch darker than the scene so white names hold up.
+    private func frostSnapshot() -> CGImage? {
+        guard let image = renderRoot(scale: 0.25, withWallpaper: true) else { return nil }
+        let source = CIImage(cgImage: image)
+        let frosted = source.clampedToExtent()
+            .applyingGaussianBlur(sigma: 16)
+            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.35, kCIInputBrightnessKey: -0.03])
+            .cropped(to: source.extent)
+        return Self.snapshotContext.createCGImage(frosted, from: source.extent)
+    }
+
+    private func renderRoot(scale: CGFloat, withWallpaper: Bool) -> CGImage? {
         let w = Int(bounds.width * scale), h = Int(bounds.height * scale)
         guard w > 0, h > 0,
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
@@ -292,7 +333,7 @@ extension LauncherCanvas: NSTextFieldDelegate {
         ctx.translateBy(x: 0, y: CGFloat(h))
         ctx.scaleBy(x: scale, y: -scale)
         Motion.instantly {
-            backdrop.isHidden = true
+            backdrop.isHidden = !withWallpaper
             blurLayer.isHidden = true
         }
         root.render(in: ctx)
@@ -300,18 +341,17 @@ extension LauncherCanvas: NSTextFieldDelegate {
             backdrop.isHidden = false
             blurLayer.isHidden = false
         }
-        guard let image = ctx.makeImage() else { return nil }
-        let source = CIImage(cgImage: image)
-        // Keep the blurred icons vivid so the backdrop reads as colour, not grey haze.
-        let blurred = source.clampedToExtent()
-            .applyingGaussianBlur(sigma: 15)
-            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.6, kCIInputBrightnessKey: 0.03])
-            .cropped(to: source.extent)
-        return Self.snapshotContext.createCGImage(blurred, from: source.extent)
+        return ctx.makeImage()
     }
 
     private var panelSheen: CAGradientLayer? {
         panel.sublayers?.first { $0.name == "sheen" } as? CAGradientLayer
+    }
+
+    /// Screen-sized frost image inside the panel's "frost" clip, kept aligned with
+    /// the screen while the panel moves (see springGlass).
+    private var panelFrostImage: CALayer? {
+        panel.sublayers?.first { $0.name == "frost" }?.sublayers?.first
     }
 
     private var panelRim: CAGradientLayer? {
@@ -322,7 +362,7 @@ extension LauncherCanvas: NSTextFieldDelegate {
     /// sits inside its parent; negative means outside.
     private var glassDecor: [(CALayer, CGFloat)] {
         var out: [(CALayer, CGFloat)] = []
-        for l in panel.sublayers ?? [] where ["sheen", "rim", "innerLight", "innerShade"].contains(l.name ?? "") {
+        for l in panel.sublayers ?? [] where ["frost", "sheen", "rim", "innerLight", "innerShade"].contains(l.name ?? "") {
             out.append((l, 0))
             if let m = l.mask { out.append((m, 0)) }
             for c in l.sublayers ?? [] where c.name == "edge" { out.append((c, -Self.edgeOutset)) }
@@ -356,6 +396,19 @@ extension LauncherCanvas: NSTextFieldDelegate {
             spring(l, "position", NSValue(point: CGPoint(x: a.midX, y: a.midY)), NSValue(point: CGPoint(x: b.midX, y: b.midY)))
             spring(l, "cornerRadius", max(0, fromCorner - inset), max(0, toCorner - inset))
         }
+        // The frost image rides inside the panel, so it has to slide the opposite way
+        // to stay put on screen. The panel's origin follows the same spring curve as
+        // its position and size, so one matching spring cancels it exactly.
+        if let frost = panelFrostImage {
+            let screen = folderLayer.bounds
+            let a = CGPoint(x: screen.midX - from.minX, y: screen.midY - from.minY)
+            let b = CGPoint(x: screen.midX - to.minX, y: screen.midY - to.minY)
+            Motion.instantly {
+                frost.bounds = CGRect(origin: .zero, size: screen.size)
+                frost.position = b
+            }
+            spring(frost, "position", NSValue(point: a), NSValue(point: b))
+        }
     }
 
     /// Clear glass: an almost transparent body, a crisp hairline edge and a soft
@@ -368,9 +421,13 @@ extension LauncherCanvas: NSTextFieldDelegate {
     private func styleGlassPanel() {
         panel.masksToBounds = false
         panel.cornerCurve = .continuous
-        panel.backgroundColor = NSColor.white.withAlphaComponent(0.13).cgColor
-        panel.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
-        panel.borderWidth = 0.5
+        panel.backgroundColor = panelBodyColor()
+        let outlined = DisplayOptions.increaseContrast
+        // A dark hairline just outside the rim light: the edge of the glass reads
+        // against bright wallpaper as well as dark (the macOS 27 glass edge).
+        panel.borderColor = outlined ? NSColor.white.withAlphaComponent(0.7).cgColor
+                                     : NSColor.black.withAlphaComponent(0.1).cgColor
+        panel.borderWidth = outlined ? 1.5 : 0.5
         panel.shadowColor = NSColor.black.cgColor
         panel.shadowOpacity = 0.26
         panel.shadowRadius = 50
@@ -383,14 +440,23 @@ extension LauncherCanvas: NSTextFieldDelegate {
 
         let sheen = CAGradientLayer()
         sheen.name = "sheen"
-        sheen.colors = [NSColor.white.withAlphaComponent(0.2).cgColor,
-                        NSColor.white.withAlphaComponent(0.05).cgColor,
+        sheen.colors = [NSColor.white.withAlphaComponent(0.09).cgColor,
+                        NSColor.white.withAlphaComponent(0.02).cgColor,
                         NSColor.white.withAlphaComponent(0).cgColor]
-        sheen.locations = [0, 0.3, 1]
+        sheen.locations = [0, 0.22, 1]
         sheen.cornerCurve = .continuous
         sheen.masksToBounds = true
         sheen.actions = still
         panel.insertSublayer(sheen, at: 0)
+
+        let frost = PlainLayer()
+        frost.name = "frost"
+        frost.masksToBounds = true
+        frost.cornerCurve = .continuous
+        let frostImage = PlainLayer()
+        frostImage.contentsGravity = .resize
+        frost.addSublayer(frostImage)
+        panel.insertSublayer(frost, below: sheen)
 
         // Inner edges: a ring just outside the glass casts its shadow inward, clipped
         // to the glass, so light pools softly along the inside of the rim.
@@ -411,7 +477,7 @@ extension LauncherCanvas: NSTextFieldDelegate {
             clip.addSublayer(edge)
             return clip
         }
-        panel.insertSublayer(innerEdge("innerLight", color: .white, opacity: 0.55, offset: 7), above: sheen)
+        panel.insertSublayer(innerEdge("innerLight", color: .white, opacity: 0.28, offset: 7), above: sheen)
         panel.insertSublayer(innerEdge("innerShade", color: .black, opacity: 0.22, offset: -7), above: sheen)
 
         // Rim light: a gradient seen only through a hairline ring, its bright side
@@ -419,16 +485,35 @@ extension LauncherCanvas: NSTextFieldDelegate {
         let rim = CAGradientLayer()
         rim.name = "rim"
         rim.actions = still
-        rim.colors = [NSColor.white.withAlphaComponent(0.6).cgColor,
-                      NSColor.white.withAlphaComponent(0.1).cgColor,
-                      NSColor.white.withAlphaComponent(0.2).cgColor]
-        rim.locations = [0, 0.55, 1]
+        rim.colors = Self.panelRimColors(strength: 0.5)
+        rim.locations = [0, 0.3, 0.7, 1]
         let ring = PlainLayer()
         ring.borderColor = NSColor.black.cgColor
-        ring.borderWidth = 1.5
+        ring.borderWidth = 1
         ring.cornerCurve = .continuous
         rim.mask = ring
         panel.addSublayer(rim)
+    }
+
+    /// Near-clear frost normally. Under Reduce Transparency the pane turns into a
+    /// dark slab of the wallpaper's own colour, so white names stay readable and
+    /// the blurred grid no longer shows through.
+    private func panelBodyColor() -> CGColor {
+        guard DisplayOptions.reduceTransparency else { return NSColor.white.withAlphaComponent(0.13).cgColor }
+        let center = CGPoint(x: metrics.size.width / 2, y: metrics.size.height / 2)
+        let base = sampler?.color(at: center, in: metrics.size) ?? NSColor(white: 0.3, alpha: 1)
+        var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0
+        base.getHue(&h, saturation: &s, brightness: &v, alpha: nil)
+        return NSColor(hue: h, saturation: min(s, 0.35), brightness: min(v, 0.32), alpha: 0.94).cgColor
+    }
+
+    /// Specular along the side facing the light, a fainter echo on the opposite
+    /// side (light passing through the glass) and dim flanks in between.
+    static func panelRimColors(strength: CGFloat) -> [CGColor] {
+        [NSColor.white.withAlphaComponent(0.34 + 0.36 * strength).cgColor,
+         NSColor.white.withAlphaComponent(0.08).cgColor,
+         NSColor.white.withAlphaComponent(0.05).cgColor,
+         NSColor.white.withAlphaComponent(0.16 + 0.06 * strength).cgColor]
     }
 
     private func renderFolderTitle(_ name: String) {

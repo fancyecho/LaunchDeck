@@ -2,10 +2,24 @@ import AppKit
 import QuartzCore
 
 extension LauncherCanvas {
+    /// The committed query plus whatever the input method is still composing, so
+    /// "wx" finds WeChat before a candidate is even picked.
+    var searchText: String { chrome.query + chrome.markedText }
+
     func setQuery(_ q: String) {
         guard q != chrome.query else { return }
+        updateSearch { chrome.query = q }
+    }
+
+    /// Input-method composition in progress (shown underlined in the bar).
+    func setComposing(_ text: String) {
+        guard text != chrome.markedText else { return }
+        updateSearch { chrome.markedText = text }
+    }
+
+    private func updateSearch(_ change: () -> Void) {
         let wasSearching = isSearching
-        chrome.query = q
+        change()
         if isSearching != wasSearching {
             Motion.fade(gridContainer, to: isSearching ? 0 : 1, duration: isSearching ? 0.16 : 0.22)
             Motion.fade(resultsLayer, to: isSearching ? 1 : 0, duration: 0.16)
@@ -14,8 +28,67 @@ extension LauncherCanvas {
         updateResults()
     }
 
+    /// Typed or committed text goes into the search field from wherever the user
+    /// was: no need to click the bar first.
+    func typeIntoSearch(_ text: String) {
+        let text = text.components(separatedBy: .newlines).joined(separator: " ")
+        if chrome.query.isEmpty, text.trimmingCharacters(in: .whitespaces).isEmpty { return }
+        prepareForTyping()
+        setQuery(chrome.query + text)
+    }
+
+    private func prepareForTyping() {
+        if folder != nil { closeFolder(animated: true) }
+        exitEditMode()
+        chrome.isFocused = true
+    }
+
+    func focusSearch() {
+        exitEditMode()
+        selection = nil
+        refreshSelection()
+        chrome.isFocused = true
+    }
+
+    func unfocusSearch() {
+        if hasMarkedText() { inputContext?.discardMarkedText() }
+        setComposing("")
+        chrome.isFocused = false
+    }
+
+    /// Back to an idle, collapsed bar with nothing typed.
+    func resetSearch() {
+        unfocusSearch()
+        if chrome.isHovered { NSCursor.arrow.set() }
+        chrome.isHovered = false
+        setQuery("")
+    }
+
+    // MARK: - Search bar geometry
+
+    /// Where the glass bar is drawn right now, in canvas coordinates (y down). The
+    /// SwiftUI host is passive, so the canvas hit-tests it.
+    var searchBarRect: CGRect {
+        let w = SearchBar.width(expanded: chrome.isExpanded, hasText: chrome.hasText)
+        return CGRect(x: (width - w) / 2, y: metrics.searchBarY - SearchBar.height / 2, width: w, height: SearchBar.height)
+    }
+
+    /// A little more generous than the glass itself, so the collapsed lens is easy to hit.
+    func searchBarContains(_ p: CGPoint) -> Bool {
+        guard isShown, folder == nil, drag == nil else { return false }
+        return searchBarRect.insetBy(dx: -10, dy: -8).contains(p)
+    }
+
+    func updateSearchHover(at p: CGPoint) {
+        let hovering = searchBarContains(p)
+        guard hovering != chrome.isHovered else { return }
+        chrome.isHovered = hovering
+        (hovering ? NSCursor.iBeam : NSCursor.arrow).set()
+        refreshLightMode()
+    }
+
     func updateResults() {
-        let q = SearchIndex.normalize(chrome.query)
+        let q = SearchIndex.normalize(searchText)
         if q.isEmpty {
             results = []
         } else {
@@ -109,4 +182,63 @@ extension LauncherCanvas {
         }
         return nil
     }
+}
+
+// MARK: - Input method
+
+/// The canvas is the text input client for the search bar. Keys are routed here
+/// from the key monitor (see handleKey), so input methods compose as they would in
+/// a text field: pinyin shows underlined in the bar while candidates are picked.
+extension LauncherCanvas: NSTextInputClient {
+    private static func plainText(_ string: Any) -> String {
+        (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
+    }
+
+    func insertText(_ string: Any, replacementRange: NSRange) {
+        setComposing("")
+        typeIntoSearch(Self.plainText(string))
+    }
+
+    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let text = Self.plainText(string)
+        if !text.isEmpty { prepareForTyping() }
+        setComposing(text)
+    }
+
+    func unmarkText() {
+        let text = chrome.markedText
+        setComposing("")
+        typeIntoSearch(text)
+    }
+
+    func selectedRange() -> NSRange {
+        NSRange(location: (searchText as NSString).length, length: 0)
+    }
+
+    func markedRange() -> NSRange {
+        guard hasMarkedText() else { return NSRange(location: NSNotFound, length: 0) }
+        return NSRange(location: (chrome.query as NSString).length, length: (chrome.markedText as NSString).length)
+    }
+
+    func hasMarkedText() -> Bool { !chrome.markedText.isEmpty }
+
+    func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? { nil }
+
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
+
+    /// The candidate window opens just under the text in the search bar.
+    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        guard let window else { return .zero }
+        let bar = searchBarRect
+        let typed = (chrome.query as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 14)]).width
+        let x = min(bar.minX + 36 + typed, bar.maxX - 24)
+        let caret = CGRect(x: x, y: bar.minY + 7, width: 1, height: 20)
+        return window.convertToScreen(convert(caret, to: nil))
+    }
+
+    func characterIndex(for point: NSPoint) -> Int { NSNotFound }
+
+    /// Editing keys are handled in handleKey before the input method sees them;
+    /// anything it hands back is ignored rather than beeping.
+    override func doCommand(by selector: Selector) {}
 }

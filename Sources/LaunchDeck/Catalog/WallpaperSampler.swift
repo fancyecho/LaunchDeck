@@ -40,6 +40,11 @@ struct WallpaperSampler {
         // Mostly white frost with just a breath of the wallpaper's hue, so it reads
         // as clean glass over the scene rather than a tinted slab.
         let frost = NSColor(hue: h, saturation: min(0.22, s * 0.3), brightness: 1, alpha: 1)
+        // Reduce Transparency: the same frost, but solid enough that the wallpaper
+        // no longer shows through behind the mini icons.
+        if DisplayOptions.reduceTransparency {
+            return NSColor(hue: h, saturation: min(0.18, s * 0.25), brightness: 0.86, alpha: 0.92).cgColor
+        }
         return frost.withAlphaComponent(0.3).cgColor
     }
 }

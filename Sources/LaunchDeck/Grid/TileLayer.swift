@@ -281,7 +281,13 @@ final class TileLayer: PlainLayer {
     /// Folder glass body colour: the wallpaper behind it, brightened, so the pane
     /// looks like tinted frosted glass instead of grey plastic.
     func setGlassTint(_ color: CGColor) {
-        Motion.instantly { folderBackground.backgroundColor = color }
+        let outlined = DisplayOptions.increaseContrast
+        Motion.instantly {
+            folderBackground.backgroundColor = color
+            // Increase Contrast: a solid edge so the pane doesn't rely on its soft rim light.
+            folderBackground.borderWidth = outlined ? 1 : 0
+            folderBackground.borderColor = NSColor.white.withAlphaComponent(0.7).cgColor
+        }
     }
 
     func setRunning(_ running: Bool) {
