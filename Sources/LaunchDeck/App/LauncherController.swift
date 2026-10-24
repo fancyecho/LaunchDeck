@@ -52,6 +52,13 @@ final class LauncherController {
         ) { [weak self] _ in
             self?.hide()
         })
+        // The window stays on the Space it opened in, so leaving that Space closes it,
+        // like Launchpad.
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.hide()
+        })
         observers.append(NotificationCenter.default.addObserver(
             forName: Preferences.backdropDidChange, object: nil, queue: .main
         ) { [weak self] _ in
@@ -104,9 +111,11 @@ final class LauncherController {
         canvas.prepareForShow(topInset: screen.safeAreaInsets.top, interactive: interactive)
         placeSearchBar(canvas.metrics)
 
+        // On screen in this Space before activating: an app activated with no window
+        // in the current Space makes macOS switch to a Space where it has one.
+        window.orderFrontRegardless()
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
         window.makeFirstResponder(canvas)
 
         if !canvas.hasWallpaper {
