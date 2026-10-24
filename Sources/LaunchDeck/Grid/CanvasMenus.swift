@@ -14,6 +14,24 @@ final class ClosureMenuItem: NSMenuItem {
     required init(coder: NSCoder) { fatalError() }
 
     @objc private func run() { handler() }
+
+    /// "Background ▸ Live Desktop / Wallpaper", shared by the menu bar icon and the
+    /// launcher's own right-click menu. Takes effect at once, even while open.
+    static func backdropChoice() -> NSMenuItem {
+        let item = NSMenuItem(title: L10n.t("Background", "背景"), action: nil, keyEquivalent: "")
+        let menu = NSMenu()
+        let options: [(String, Bool)] = [
+            (L10n.t("Live Desktop", "实时桌面"), true),
+            (L10n.t("Wallpaper (with Parallax)", "壁纸（翻页视差）"), false),
+        ]
+        for (title, live) in options {
+            let option = ClosureMenuItem(title) { Preferences.liveBackdrop = live }
+            option.state = Preferences.liveBackdrop == live ? .on : .off
+            menu.addItem(option)
+        }
+        item.submenu = menu
+        return item
+    }
 }
 
 extension LauncherCanvas {

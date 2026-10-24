@@ -8,7 +8,9 @@ final class LauncherController {
     private let catalog = AppCatalog()
     private let window = LauncherWindow()
     private let container = NSView()
-    private let fallbackBlur = NSVisualEffectView()
+    /// The live desktop, blurred by the window server. Used when the background is
+    /// set to the live desktop, or when the wallpaper can't be read.
+    private let liveBlur = NSVisualEffectView()
     private let searchHost: PassiveHostingView<SearchBarContainer>
     private var monitors: [Any] = []
     private var observers: [NSObjectProtocol] = []
@@ -27,11 +29,13 @@ final class LauncherController {
         searchHost.sizingOptions = []
 
         container.wantsLayer = true
-        fallbackBlur.material = .fullScreenUI
-        fallbackBlur.blendingMode = .behindWindow
-        fallbackBlur.state = .active
-        fallbackBlur.alphaValue = 0
-        for v in [fallbackBlur, canvas] as [NSView] {
+        liveBlur.material = .fullScreenUI
+        liveBlur.blendingMode = .behindWindow
+        liveBlur.state = .active
+        // White icon names need a dark frost whatever the system appearance.
+        liveBlur.appearance = NSAppearance(named: .darkAqua)
+        liveBlur.alphaValue = 0
+        for v in [liveBlur, canvas] as [NSView] {
             v.autoresizingMask = [.width, .height]
             container.addSubview(v)
         }
@@ -48,7 +52,27 @@ final class LauncherController {
         ) { [weak self] _ in
             self?.hide()
         })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: Preferences.backdropDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.refreshBackdrop()
+        })
         if let screen = NSScreen.main { loadWallpaper(for: screen) }
+    }
+
+    /// Switches between the live desktop and the wallpaper, crossfading if open.
+    private func refreshBackdrop() {
+        guard let screen = window.screen ?? NSScreen.main else { return }
+        wallpaperKey = nil
+        loadWallpaper(for: screen)
+        syncLiveBlur()
+    }
+
+    /// The live blur shows only while there's no wallpaper picture to draw.
+    private func syncLiveBlur() {
+        guard isVisible else { return }
+        let target: CGFloat = canvas.hasWallpaper ? 0 : 1
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.3; liveBlur.animator().alphaValue = target }
     }
 
     func toggle() {
@@ -74,7 +98,7 @@ final class LauncherController {
         window.setFrame(screen.frame, display: false)
         container.frame = CGRect(origin: .zero, size: screen.frame.size)
         canvas.frame = container.bounds
-        fallbackBlur.frame = container.bounds
+        liveBlur.frame = container.bounds
         loadWallpaper(for: screen)
         canvas.ensureBackdropFallback()
         canvas.prepareForShow(topInset: screen.safeAreaInsets.top, interactive: interactive)
@@ -86,7 +110,12 @@ final class LauncherController {
         window.makeFirstResponder(canvas)
 
         if !canvas.hasWallpaper {
-            NSAnimationContext.runAnimationGroup { $0.duration = 0.3; fallbackBlur.animator().alphaValue = 1 }
+            // A pinch reveals the blur with the fingers (see setPresentation).
+            if interactive {
+                liveBlur.alphaValue = 0
+            } else {
+                NSAnimationContext.runAnimationGroup { $0.duration = 0.3; liveBlur.animator().alphaValue = 1 }
+            }
         }
         if !interactive {
             // Let the window put up its collapsed state once before animating in.
@@ -106,7 +135,7 @@ final class LauncherController {
         guard isVisible else { return }
         isVisible = false
         canvas.animateOut(launching: key)
-        NSAnimationContext.runAnimationGroup { $0.duration = 0.25; fallbackBlur.animator().alphaValue = 0 }
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.25; liveBlur.animator().alphaValue = 0 }
 
         let work = DispatchWorkItem { [weak self] in
             guard let self, !self.isVisible else { return }
@@ -133,9 +162,9 @@ final class LauncherController {
         case .ended:
             switch pinchPhase {
             case .opening:
-                if pinchProgress >= Self.commitProgress { canvas.finishPresentation(open: true) } else { hide() }
+                if pinchProgress >= Self.commitProgress { finishReveal() } else { hide() }
             case .closing:
-                if pinchProgress >= Self.commitProgress { hide() } else { canvas.finishPresentation(open: true) }
+                if pinchProgress >= Self.commitProgress { hide() } else { finishReveal() }
             default:
                 break
             }
@@ -170,14 +199,14 @@ final class LauncherController {
         switch pinchPhase {
         case .opening:
             pinchProgress = min(max((Self.openStart - ratio) / (Self.openStart - Self.openEnd), 0), 1)
-            canvas.setPresentation(easeOut(pinchProgress))
+            setPresentation(easeOut(pinchProgress))
             if pinchProgress >= 1 {
-                canvas.finishPresentation(open: true)
+                finishReveal()
                 pinchPhase = .finished
             }
         case .closing:
             pinchProgress = min(max((ratio - Self.closeStart) / (Self.closeEnd - Self.closeStart), 0), 1)
-            canvas.setPresentation(1 - easeOut(pinchProgress))
+            setPresentation(1 - easeOut(pinchProgress))
             if pinchProgress >= 1 {
                 hide()
                 pinchPhase = .finished
@@ -188,6 +217,19 @@ final class LauncherController {
     }
 
     private func easeOut(_ t: CGFloat) -> CGFloat { 1 - pow(1 - t, 2) }
+
+    /// Pinch progress drives the canvas and, over the live desktop, the blur with it.
+    private func setPresentation(_ p: CGFloat) {
+        canvas.setPresentation(p)
+        if !canvas.hasWallpaper { liveBlur.alphaValue = p }
+    }
+
+    private func finishReveal() {
+        canvas.finishPresentation(open: true)
+        if !canvas.hasWallpaper {
+            NSAnimationContext.runAnimationGroup { $0.duration = 0.2; liveBlur.animator().alphaValue = 1 }
+        }
+    }
 
     private func launch(_ app: AppItem) {
         let config = NSWorkspace.OpenConfiguration()
@@ -206,7 +248,8 @@ final class LauncherController {
     }
 
     private func loadWallpaper(for screen: NSScreen) {
-        guard let url = NSWorkspace.shared.desktopImageURL(for: screen).flatMap(Self.resolveWallpaper) else {
+        guard !Preferences.liveBackdrop,
+              let url = NSWorkspace.shared.desktopImageURL(for: screen).flatMap(Self.resolveWallpaper) else {
             wallpaperKey = nil
             canvas.setWallpaper(nil)
             return
@@ -221,6 +264,7 @@ final class LauncherController {
             DispatchQueue.main.async {
                 guard let self, self.wallpaperKey == key else { return }
                 self.canvas.setWallpaper(image)
+                self.syncLiveBlur()
             }
         }
     }

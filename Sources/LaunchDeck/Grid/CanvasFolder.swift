@@ -313,7 +313,9 @@ extension LauncherCanvas: NSTextFieldDelegate {
     /// so through the glass the icons melt into soft washes of colour instead of
     /// reading as smudges. Kept a touch darker than the scene so white names hold up.
     private func frostSnapshot() -> CGImage? {
-        guard let image = renderRoot(scale: 0.25, withWallpaper: true) else { return nil }
+        // Over the live desktop there is no picture to draw (the window server blurs
+        // it), so the frost is the icons alone and the live blur shows through it.
+        guard let image = renderRoot(scale: 0.25, withWallpaper: hasWallpaper) else { return nil }
         let source = CIImage(cgImage: image)
         let frosted = source.clampedToExtent()
             .applyingGaussianBlur(sigma: 16)

@@ -39,6 +39,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         comet.state = Preferences.cometTrail ? .on : .off
         menu.addItem(comet)
 
+        menu.addItem(ClosureMenuItem.backdropChoice())
+
         let dock = ClosureMenuItem(L10n.t("Show in Dock", "在程序坞中显示")) { Preferences.showInDock.toggle() }
         dock.state = Preferences.showInDock ? .on : .off
         menu.addItem(dock)

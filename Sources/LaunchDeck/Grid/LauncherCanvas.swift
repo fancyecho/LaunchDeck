@@ -213,9 +213,9 @@ final class LauncherCanvas: NSView {
     func setWallpaper(_ image: CGImage?) {
         Motion.instantly {
             backdrop.contents = image
-            // Without a wallpaper the system blur shows windows behind; darken it so
-            // they don't compete with the icons.
-            backdrop.backgroundColor = image == nil ? NSColor.black.withAlphaComponent(0.38).cgColor : nil
+            // Over the live desktop the system's dark blur already keeps the windows
+            // behind from competing with the icons; only the faintest extra dim.
+            backdrop.backgroundColor = image == nil ? NSColor.black.withAlphaComponent(0.04).cgColor : nil
         }
         sampler = image.flatMap(WallpaperSampler.init)
         refreshGlassTints()
@@ -232,9 +232,11 @@ final class LauncherCanvas: NSView {
     }
 
     func glassTint(slot: Int) -> CGColor {
+        // Over the live desktop there's no picture to sample: plain white frost,
+        // a little denser so the folder still reads against busy windows.
         guard let sampler else {
             return DisplayOptions.reduceTransparency ? NSColor(white: 0.86, alpha: 0.92).cgColor
-                                                     : NSColor.white.withAlphaComponent(0.16).cgColor
+                                                     : NSColor.white.withAlphaComponent(0.24).cgColor
         }
         return sampler.glassTint(at: metrics.center(for: slot), in: metrics.size)
     }
@@ -821,6 +823,8 @@ final class LauncherCanvas: NSView {
         } else {
             menu.addItem(withTitle: L10n.t("Edit Layout", "编辑布局"), action: #selector(menuEnterEdit), keyEquivalent: "").target = self
         }
+        menu.addItem(.separator())
+        menu.addItem(ClosureMenuItem.backdropChoice())
         menu.addItem(.separator())
         menu.addItem(withTitle: L10n.t("Reset Layout by Category…", "按类别重新整理（重置布局）…"),
                      action: #selector(menuResetLayout), keyEquivalent: "").target = self

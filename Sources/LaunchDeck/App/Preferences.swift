@@ -37,6 +37,17 @@ enum Preferences {
         set { defaults.set(newValue, forKey: "cometTrail") }
     }
 
+    /// Background is the live desktop (windows included) under a system blur,
+    /// instead of a blurred copy of the wallpaper picture.
+    static var liveBackdrop: Bool {
+        get { defaults.object(forKey: "liveBackdrop") as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: "liveBackdrop")
+            NotificationCenter.default.post(name: backdropDidChange, object: nil)
+        }
+    }
+    static let backdropDidChange = Notification.Name("LaunchDeckBackdropDidChange")
+
     static var showInDock: Bool {
         get { defaults.object(forKey: "showInDock") as? Bool ?? true }
         set {
